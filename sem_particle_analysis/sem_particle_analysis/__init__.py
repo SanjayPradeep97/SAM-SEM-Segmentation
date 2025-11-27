@@ -10,6 +10,7 @@ from .scale_detection import ScaleDetector
 from .segmentation import ParticleSegmenter
 from .analysis import ParticleAnalyzer
 from .data_manager import ResultsManager
+from .interactive import InteractiveRefiner
 
 __version__ = "0.1.0"
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "ParticleSegmenter",
     "ParticleAnalyzer",
     "ResultsManager",
+    "InteractiveRefiner",
 ]
