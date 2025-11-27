@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sem_particle_analysis"
+version = "0.1.0"
+description = "Particle segmentation and analysis for SEM/TEM images using SAM"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["image-processing", "segmentation", "microscopy", "SEM", "TEM", "SAM"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+    "numpy>=1.20.0",
+    "opencv-python>=4.5.0",
+    "torch>=1.10.0",
+    "torchvision>=0.11.0",
+    "scikit-image>=0.18.0",
+    "matplotlib>=3.3.0",
+    "pandas>=1.3.0",
+    "easyocr>=1.6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+]
+jupyter = [
+    "jupyter>=1.0.0",
+    "ipywidgets>=7.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/sem-particle-analysis"
+Documentation = "https://github.com/yourusername/sem-particle-analysis#readme"
+Repository = "https://github.com/yourusername/sem-particle-analysis"
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
