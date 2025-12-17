@@ -31,6 +31,20 @@ class ParticleSegmenter:
         self.scores = None
         self.selected_mask = None
         self.selected_mask_index = None
+        self.current_encoded_image = None  # Track if image is already encoded
+
+    def encode_image(self, image):
+        """
+        Encode image features using SAM encoder (expensive operation).
+        Call this once per image, then use refine_with_sam with image_already_encoded=True.
+
+        Args:
+            image (np.ndarray): RGB image array (H, W, 3)
+        """
+        print("Encoding image with SAM...")
+        self.sam_model.set_image(image)
+        self.current_encoded_image = image
+        print("Image encoding complete")
 
     def segment_image(self, image, multimask_output=True):
         """
@@ -47,10 +61,14 @@ class ParticleSegmenter:
                 - masks: Array of boolean masks (num_masks, H, W)
                 - scores: Confidence scores for each mask
         """
-        # Set image in SAM predictor (runs encoder once)
-        print("Running SAM image encoder...")
-        self.sam_model.set_image(image)
-        print("Encoder complete. Generating masks...")
+        # Set image in SAM predictor if not already encoded
+        if self.current_encoded_image is None or not np.array_equal(self.current_encoded_image, image):
+            print("Running SAM image encoder...")
+            self.sam_model.set_image(image)
+            self.current_encoded_image = image
+            print("Encoder complete. Generating masks...")
+        else:
+            print("Using pre-encoded image. Generating masks...")
 
         # Use full-image bounding box as prompt
         height, width = image.shape[:2]
@@ -127,7 +145,7 @@ class ParticleSegmenter:
             return self.selected_mask.astype(np.uint8)
 
     def refine_with_sam(self, image, point_coords, point_labels,
-                       base_mask=None, multimask_output=True):
+                       base_mask=None, multimask_output=True, image_already_encoded=False):
         """
         Refine segmentation using point prompts.
 
@@ -137,21 +155,23 @@ class ParticleSegmenter:
             point_labels (list or np.ndarray): N array of labels (1=positive, 0=negative)
             base_mask (np.ndarray, optional): Base mask for ROI calculation
             multimask_output (bool): Whether to return multiple candidates
+            image_already_encoded (bool): If True, skip image encoding (assumes set_image was already called)
 
         Returns:
             tuple: (refined_mask, score)
                 - refined_mask: Best refined mask
                 - score: Confidence score
         """
-        # Ensure image is set
-        self.sam_model.set_image(image)
+        # Ensure image is set (only if not already encoded)
+        if not image_already_encoded:
+            self.sam_model.set_image(image)
 
         # Calculate ROI box from base mask if provided
         if base_mask is not None and base_mask.any():
             box = self._compute_roi_box(base_mask, pad=10)
         else:
-            H, W = image.shape[:2]
-            box = np.array([[0, 0, W, H]])
+            # No box constraint - let SAM focus on the clicked point without spatial constraints
+            box = None
 
         # Convert points to numpy arrays
         pts = np.array(point_coords, dtype=float)
@@ -179,8 +199,8 @@ class ParticleSegmenter:
 
         refined = masks_out[best_idx].astype(bool)
 
-        # Clean up
-        refined = morphology.remove_small_objects(refined, min_size=20)
+        # Clean up (use smaller default for SAM refinement to preserve detail)
+        refined = morphology.remove_small_objects(refined, min_size=10)
 
         return refined, scores[best_idx]
 

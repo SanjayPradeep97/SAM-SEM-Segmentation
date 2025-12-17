@@ -20,14 +20,16 @@ class ParticleAnalyzer:
         conversion: Conversion factor (nm/pixel)
     """
 
-    def __init__(self, conversion_factor=None):
+    def __init__(self, conversion_factor=None, min_size=30):
         """
         Initialize the particle analyzer.
 
         Args:
             conversion_factor (float, optional): nm/pixel conversion factor
+            min_size (int): Minimum particle size in pixels for filtering
         """
         self.conversion = conversion_factor
+        self.min_size = min_size
         self.mask = None
         self.labeled_mask = None
         self.regions = []
@@ -41,15 +43,45 @@ class ParticleAnalyzer:
         """
         self.conversion = conversion_factor
 
-    def analyze_mask(self, mask, min_area=50, min_size=30, remove_border=True,
+    def _relabel_and_filter(self):
+        """
+        Relabel mask and filter by size consistently to prevent fake particles.
+
+        This method applies morphological cleanup and size filtering to remove
+        noise and small artifacts that can appear after particle operations.
+
+        Returns:
+            int: Number of particles after filtering
+        """
+        # Apply morphological opening to remove small protrusions
+        self.mask = morphology.binary_opening(
+            self.mask.astype(bool),
+            morphology.disk(1)
+        )
+
+        # Remove small objects
+        self.mask = morphology.remove_small_objects(
+            self.mask.astype(bool),
+            min_size=self.min_size
+        )
+
+        # Relabel
+        self.labeled_mask = measure.label(self.mask, connectivity=2)
+
+        # Get all regions and filter by minimum size
+        all_regions = measure.regionprops(self.labeled_mask)
+        self.regions = [r for r in all_regions if r.area >= self.min_size]
+
+        return len(self.regions)
+
+    def analyze_mask(self, mask, min_size=None, remove_border=True,
                     border_buffer=4):
         """
         Analyze a binary mask to identify and measure particles.
 
         Args:
             mask (np.ndarray): Binary mask (particles as True/1)
-            min_area (int): Minimum particle area in pixels
-            min_size (int): Minimum object size for cleanup
+            min_size (int, optional): Minimum particle size in pixels. Uses instance default if None.
             remove_border (bool): Whether to remove border-touching particles
             border_buffer (int): Buffer width for border removal (pixels)
 
@@ -58,6 +90,10 @@ class ParticleAnalyzer:
                 - num_particles: Number of detected particles
                 - regions: List of RegionProperties objects
         """
+        # Use instance min_size if not provided
+        if min_size is None:
+            min_size = self.min_size
+
         # Clean up small objects
         clean_mask = morphology.remove_small_objects(
             mask.astype(bool),
@@ -74,8 +110,8 @@ class ParticleAnalyzer:
         # Get region properties
         all_regions = measure.regionprops(self.labeled_mask)
 
-        # Filter by minimum area
-        self.regions = [r for r in all_regions if r.area >= min_area]
+        # Filter by minimum size
+        self.regions = [r for r in all_regions if r.area >= min_size]
         self.mask = clean_mask
 
         num_particles = len(self.regions)
@@ -124,9 +160,8 @@ class ParticleAnalyzer:
         cleaned = clear_border(self.mask.astype(bool), buffer_size=buffer_size)
         self.mask = cleaned.astype(bool)
 
-        # Relabel and reanalyze
-        self.labeled_mask = measure.label(self.mask, connectivity=2)
-        self.regions = measure.regionprops(self.labeled_mask)
+        # Relabel with filtering to prevent fake particles
+        self._relabel_and_filter()
 
         n_removed = max(0, n_before - len(self.regions))
         print(f"Removed {n_removed} edge-touching particles")
@@ -204,9 +239,8 @@ class ParticleAnalyzer:
         delete_mask = np.isin(self.labeled_mask, labels_to_delete)
         self.mask = self.mask & (~delete_mask)
 
-        # Relabel
-        self.labeled_mask = measure.label(self.mask, connectivity=2)
-        self.regions = measure.regionprops(self.labeled_mask)
+        # Relabel with filtering to prevent fake particles
+        self._relabel_and_filter()
 
         return len(labels_to_delete)
 
@@ -239,9 +273,8 @@ class ParticleAnalyzer:
         # Update main mask
         self.mask = (self.mask & (~merge_mask)) | merge_mask_closed
 
-        # Relabel
-        self.labeled_mask = measure.label(self.mask, connectivity=2)
-        self.regions = measure.regionprops(self.labeled_mask)
+        # Relabel with filtering to prevent fake particles
+        self._relabel_and_filter()
 
         print(f"Merged {len(labels_to_merge)} particles. New count: {len(self.regions)}")
         return len(self.regions)
@@ -262,9 +295,8 @@ class ParticleAnalyzer:
             # Union with existing mask
             self.mask = self.mask | sam_mask.astype(bool)
 
-        # Relabel
-        self.labeled_mask = measure.label(self.mask, connectivity=2)
-        self.regions = measure.regionprops(self.labeled_mask)
+        # Relabel with filtering to prevent fake particles
+        self._relabel_and_filter()
 
         print(f"Added particle. New count: {len(self.regions)}")
         return len(self.regions)

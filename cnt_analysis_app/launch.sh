@@ -27,4 +27,4 @@ echo "Press Ctrl+C to stop the application"
 echo ""
 
 # Launch the app
-python3 app.py
+python3 app_v2.py

@@ -148,6 +148,49 @@ class ResultsManager:
         print(f"Deleted result at index {index}")
         return True
 
+    def find_duplicates(self):
+        """
+        Find duplicate entries based on file_name.
+
+        Returns:
+            list: List of tuples (index, file_name) for duplicate entries
+        """
+        duplicates = []
+        seen = {}
+
+        for idx, row in self.results_df.iterrows():
+            file_name = row['file_name']
+            if file_name in seen:
+                # This is a duplicate - add to list
+                duplicates.append((idx, file_name))
+            else:
+                seen[file_name] = idx
+
+        return duplicates
+
+    def delete_duplicates(self, keep='first'):
+        """
+        Delete duplicate entries based on file_name.
+
+        Args:
+            keep (str): Which duplicates to keep - 'first' or 'last'
+
+        Returns:
+            int: Number of duplicates deleted
+        """
+        initial_count = len(self.results_df)
+
+        # Remove duplicates
+        self.results_df = self.results_df.drop_duplicates(subset='file_name', keep=keep)
+        self.results_df.to_csv(self.csv_file, index=False)
+
+        # Reload to reset indices
+        self.results_df = self._load_data()
+
+        deleted_count = initial_count - len(self.results_df)
+        print(f"Deleted {deleted_count} duplicate entries (kept {keep})")
+        return deleted_count
+
     def export_results(self, output_file):
         """
         Export current results to a new CSV file.

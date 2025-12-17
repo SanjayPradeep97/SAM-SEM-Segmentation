@@ -30,6 +30,6 @@ echo Press Ctrl+C to stop the application
 echo.
 
 REM Launch the app
-python app.py
+python app_v2.py
 
 pause
