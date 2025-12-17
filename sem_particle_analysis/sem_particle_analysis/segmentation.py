@@ -170,8 +170,8 @@ class ParticleSegmenter:
         if base_mask is not None and base_mask.any():
             box = self._compute_roi_box(base_mask, pad=10)
         else:
-            H, W = image.shape[:2]
-            box = np.array([[0, 0, W, H]])
+            # No box constraint - let SAM focus on the clicked point without spatial constraints
+            box = None
 
         # Convert points to numpy arrays
         pts = np.array(point_coords, dtype=float)
@@ -199,8 +199,8 @@ class ParticleSegmenter:
 
         refined = masks_out[best_idx].astype(bool)
 
-        # Clean up
-        refined = morphology.remove_small_objects(refined, min_size=20)
+        # Clean up (use smaller default for SAM refinement to preserve detail)
+        refined = morphology.remove_small_objects(refined, min_size=10)
 
         return refined, scores[best_idx]
 

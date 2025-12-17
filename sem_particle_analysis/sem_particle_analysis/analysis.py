@@ -20,18 +20,16 @@ class ParticleAnalyzer:
         conversion: Conversion factor (nm/pixel)
     """
 
-    def __init__(self, conversion_factor=None, min_size=30, min_area=50):
+    def __init__(self, conversion_factor=None, min_size=30):
         """
         Initialize the particle analyzer.
 
         Args:
             conversion_factor (float, optional): nm/pixel conversion factor
-            min_size (int): Minimum object size for morphological cleanup
-            min_area (int): Minimum particle area in pixels
+            min_size (int): Minimum particle size in pixels for filtering
         """
         self.conversion = conversion_factor
         self.min_size = min_size
-        self.min_area = min_area
         self.mask = None
         self.labeled_mask = None
         self.regions = []
@@ -70,21 +68,20 @@ class ParticleAnalyzer:
         # Relabel
         self.labeled_mask = measure.label(self.mask, connectivity=2)
 
-        # Get all regions and filter by minimum area
+        # Get all regions and filter by minimum size
         all_regions = measure.regionprops(self.labeled_mask)
-        self.regions = [r for r in all_regions if r.area >= self.min_area]
+        self.regions = [r for r in all_regions if r.area >= self.min_size]
 
         return len(self.regions)
 
-    def analyze_mask(self, mask, min_area=50, min_size=30, remove_border=True,
+    def analyze_mask(self, mask, min_size=None, remove_border=True,
                     border_buffer=4):
         """
         Analyze a binary mask to identify and measure particles.
 
         Args:
             mask (np.ndarray): Binary mask (particles as True/1)
-            min_area (int): Minimum particle area in pixels
-            min_size (int): Minimum object size for cleanup
+            min_size (int, optional): Minimum particle size in pixels. Uses instance default if None.
             remove_border (bool): Whether to remove border-touching particles
             border_buffer (int): Buffer width for border removal (pixels)
 
@@ -93,6 +90,10 @@ class ParticleAnalyzer:
                 - num_particles: Number of detected particles
                 - regions: List of RegionProperties objects
         """
+        # Use instance min_size if not provided
+        if min_size is None:
+            min_size = self.min_size
+
         # Clean up small objects
         clean_mask = morphology.remove_small_objects(
             mask.astype(bool),
@@ -109,8 +110,8 @@ class ParticleAnalyzer:
         # Get region properties
         all_regions = measure.regionprops(self.labeled_mask)
 
-        # Filter by minimum area
-        self.regions = [r for r in all_regions if r.area >= min_area]
+        # Filter by minimum size
+        self.regions = [r for r in all_regions if r.area >= min_size]
         self.mask = clean_mask
 
         num_particles = len(self.regions)
