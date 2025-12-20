@@ -130,6 +130,23 @@ class AppState:
         with open(state_file, 'w') as f:
             json.dump(state_data, f, indent=2)
 
+    def save_pending_state(self):
+        """Save current pending changes state to undo history (for undoing individual clicks)."""
+        import copy
+        self.undo_history.append({
+            'mode': self.click_mode,
+            'pending_deletes': self.pending_deletes.copy(),
+            'pending_add_points': self.pending_add_points.copy(),
+            'pending_add_masks': [mask.copy() for mask in self.pending_add_masks],  # Deep copy numpy arrays
+            'pending_merge': self.pending_merge.copy(),
+            'point_refine_particle': self.point_refine_particle,
+            'point_refine_base_mask': self.point_refine_base_mask.copy() if self.point_refine_base_mask is not None else None,
+            'point_refine_points': self.point_refine_points.copy(),
+            'point_refine_labels': self.point_refine_labels.copy(),
+            'point_refine_preview_mask': self.point_refine_preview_mask.copy() if self.point_refine_preview_mask is not None else None,
+            'point_refine_logits': self.point_refine_logits.copy() if self.point_refine_logits is not None else None
+        })
+
     def load_state(self):
         """Load processing state from file and validate against results CSV."""
         if not self.image_paths:
@@ -280,7 +297,7 @@ def create_image_gallery():
 def select_image_from_gallery(evt: gr.SelectData):
     """Handle image selection from gallery and switch to processing tab."""
     if not state.image_paths:
-        return None, "No images loaded", gr.Tabs(selected=1)
+        return None, "No images loaded", gr.Tabs(selected=1), "delete"
 
     # evt.index gives us which image was clicked
     state.current_index = evt.index
@@ -291,10 +308,10 @@ def select_image_from_gallery(evt: gr.SelectData):
         filename = os.path.basename(state.image_paths[state.current_index])
         info = f"Image {state.current_index + 1} / {len(state.image_paths)}: {filename}"
 
-        # Return image, info, and switch to processing tab (id=2)
-        return state.current_image, info, gr.Tabs(selected=2)
+        # Return image, info, switch to processing tab (id=2), and reset mode radio to "delete"
+        return state.current_image, info, gr.Tabs(selected=2), "delete"
     except Exception as e:
-        return None, f"❌ Error loading image: {str(e)}", gr.Tabs(selected=1)
+        return None, f"❌ Error loading image: {str(e)}", gr.Tabs(selected=1), "delete"
 
 
 # ============================================================================
@@ -472,6 +489,8 @@ def handle_image_click(evt: gr.SelectData):
             region, idx, label = state.analyzer.find_particle_at_point(x, y)
             if region is not None:
                 if label not in state.pending_deletes:
+                    # Save pending state before modification (for undo of this click)
+                    state.save_pending_state()
                     state.pending_deletes.append(label)
 
                 particle_viz = create_particle_visualization(
@@ -489,6 +508,9 @@ def handle_image_click(evt: gr.SelectData):
         elif state.click_mode == "add":
             # ADD MODE: Click to add a single particle at this location
             try:
+                # Save pending state before modification (for undo of this click)
+                state.save_pending_state()
+
                 # Use single positive point WITHOUT base_mask to segment just the clicked particle
                 refined_mask, score = state.segmenter.refine_with_sam(
                     state.cropped_image,
@@ -519,6 +541,8 @@ def handle_image_click(evt: gr.SelectData):
             region, idx, label = state.analyzer.find_particle_at_point(x, y)
             if region is not None:
                 if label not in state.pending_merge:
+                    # Save pending state before modification (for undo of this click)
+                    state.save_pending_state()
                     state.pending_merge.append(label)
 
                 # Visualization will show selected particles in different color
@@ -537,6 +561,9 @@ def handle_image_click(evt: gr.SelectData):
         elif state.click_mode == "point_refine":
             # POINT REFINE MODE: Click anywhere to add positive/negative points with live preview
             # Users can refine existing particles OR create new ones from scratch
+
+            # Save pending state before adding point (for undo of this click)
+            state.save_pending_state()
 
             # Check if user clicked on an existing particle (only on first click)
             if len(state.point_refine_points) == 0:
@@ -653,6 +680,34 @@ def set_point_type(point_type):
     return f"✓ Point type: {point_type.upper()}"
 
 
+def reset_point_refine():
+    """Reset point refine state and redraw visualization."""
+    try:
+        state.point_refine_particle = None
+        state.point_refine_base_mask = None
+        state.point_refine_points = []
+        state.point_refine_labels = []
+        state.point_refine_preview_mask = None
+        state.point_refine_logits = None
+
+        # Redraw regular visualization
+        if state.analyzer is not None:
+            particle_viz = create_particle_visualization(
+                state.cropped_image,
+                state.analyzer.labeled_mask,
+                state.analyzer.regions,
+                show_labels=state.show_particle_numbers,
+                pending_deletes=state.pending_deletes,
+                pending_add_masks=state.pending_add_masks,
+                pending_merge=state.pending_merge
+            )
+            return particle_viz, "✅ Reset point refinement"
+        else:
+            return None, "✅ Reset point refinement"
+    except Exception as e:
+        return None, f"❌ Error: {str(e)}"
+
+
 def set_click_mode(mode):
     """Set click mode and return status message."""
     state.click_mode = mode
@@ -691,12 +746,7 @@ def apply_refinement_changes(progress=gr.Progress()):
         changes_made = False
         status_messages = []
 
-        # Save current state to undo history before making changes
-        import copy
-        state.undo_history.append({
-            'labeled_mask': state.analyzer.labeled_mask.copy(),
-            'regions': copy.deepcopy(state.analyzer.regions)
-        })
+        # Note: State is already saved on each click, no need to save here
 
         # Apply deletions
         if state.pending_deletes:
@@ -728,15 +778,21 @@ def apply_refinement_changes(progress=gr.Progress()):
             state.pending_merge = []
 
         # Apply point refinement
-        if state.point_refine_particle is not None and state.point_refine_preview_mask is not None:
+        if state.point_refine_preview_mask is not None:
             progress(0.7, desc="Applying point refinement...")
 
             # Use the pre-generated preview mask (already refined during clicking)
-            # Delete the old particle and add the refined one
-            state.analyzer.delete_particles([state.point_refine_particle])
+            if state.point_refine_particle is not None:
+                # Refining existing particle - delete old and add refined one
+                state.analyzer.delete_particles([state.point_refine_particle])
+                status_messages.append(f"Refined particle with {len(state.point_refine_points)} points")
+            else:
+                # Creating new particle from scratch
+                status_messages.append(f"Created new particle with {len(state.point_refine_points)} points")
+
+            # Add the refined/new particle
             state.analyzer.add_particle_from_sam(state.point_refine_preview_mask)
 
-            status_messages.append(f"Refined particle with {len(state.point_refine_points)} points")
             state.point_refine_particle = None
             state.point_refine_base_mask = None
             state.point_refine_points = []
@@ -746,7 +802,10 @@ def apply_refinement_changes(progress=gr.Progress()):
             changes_made = True
 
         if not changes_made:
-            return None, None, None, "No changes to apply"
+            return None, None, "No changes to apply", None, None
+
+        # Clear undo history since changes have been applied
+        state.undo_history = []
 
         progress(0.9, desc="Updating visualization...")
 
@@ -782,7 +841,7 @@ def apply_refinement_changes(progress=gr.Progress()):
 
 
 def undo_last_action():
-    """Undo the last refinement action."""
+    """Undo the last click (removes last item from pending changes)."""
     try:
         if state.analyzer is None:
             return None, None, "❌ No analysis available"
@@ -790,37 +849,48 @@ def undo_last_action():
         if not state.undo_history:
             return None, None, "❌ No actions to undo"
 
-        # Restore previous state
+        # Restore previous pending state (before last click)
         previous_state = state.undo_history.pop()
-        state.analyzer.labeled_mask = previous_state['labeled_mask']
-        state.analyzer.regions = previous_state['regions']
 
-        # Clear any pending changes
-        state.pending_deletes = []
-        state.pending_add_points = []
-        state.pending_add_masks = []
-        state.pending_merge = []
-        state.point_refine_particle = None
-        state.point_refine_base_mask = None
-        state.point_refine_points = []
-        state.point_refine_labels = []
-        state.point_refine_preview_mask = None
-        state.point_refine_logits = None
+        # Restore only the pending changes (not the mask itself)
+        state.pending_deletes = previous_state['pending_deletes']
+        state.pending_add_points = previous_state['pending_add_points']
+        state.pending_add_masks = previous_state['pending_add_masks']
+        state.pending_merge = previous_state['pending_merge']
+        state.point_refine_particle = previous_state['point_refine_particle']
+        state.point_refine_base_mask = previous_state['point_refine_base_mask']
+        state.point_refine_points = previous_state['point_refine_points']
+        state.point_refine_labels = previous_state['point_refine_labels']
+        state.point_refine_preview_mask = previous_state['point_refine_preview_mask']
+        state.point_refine_logits = previous_state['point_refine_logits']
 
-        # Update visualization
-        particle_viz = create_particle_visualization(
-            state.cropped_image,
-            state.analyzer.labeled_mask,
-            state.analyzer.regions,
-            show_labels=state.show_particle_numbers
-        )
+        # Update visualization based on mode
+        if state.click_mode == "point_refine" and state.point_refine_preview_mask is not None:
+            # Show point refine visualization with restored points
+            particle_viz = create_point_refine_visualization(
+                state.cropped_image,
+                state.point_refine_preview_mask,
+                state.point_refine_points,
+                state.point_refine_labels
+            )
+        else:
+            # Show regular visualization with restored pending changes
+            particle_viz = create_particle_visualization(
+                state.cropped_image,
+                state.analyzer.labeled_mask,
+                state.analyzer.regions,
+                show_labels=state.show_particle_numbers,
+                pending_deletes=state.pending_deletes,
+                pending_add_masks=state.pending_add_masks,
+                pending_merge=state.pending_merge
+            )
 
-        # Update measurements
+        # Measurements don't change (we're only undoing pending changes)
         measurements = state.analyzer.get_measurements(in_nm=True)
         results_df = create_results_dataframe(measurements)
 
         num_particles = len(state.analyzer.regions)
-        status = f"↩️ Undone! Total: {num_particles} particles | {len(state.undo_history)} actions remaining in history"
+        status = f"↩️ Undone last click! {num_particles} particles | {len(state.undo_history)} undo steps remaining"
 
         return particle_viz, results_df, status
 
@@ -893,6 +963,7 @@ def clear_pending_changes():
         state.point_refine_labels = []
         state.point_refine_preview_mask = None
         state.point_refine_logits = None
+        state.undo_history = []  # Clear undo history since all pending changes are cleared
 
         # Redraw visualization without pending changes
         if state.analyzer is not None:
@@ -999,48 +1070,115 @@ def save_current_results():
 
 
 def get_session_summary():
-    """Get summary of all processed images."""
+    """Get summary of all processed images with aggregate particle statistics."""
     try:
         if state.results_manager is None:
-            return None, "No results available"
+            return None, "No results available", "No particle statistics available", gr.update(choices=[], value=None)
 
         results_df = state.results_manager.get_results()
 
         if len(results_df) == 0:
-            return None, "No images processed yet"
+            return None, "No images processed yet", "No particle statistics available", gr.update(choices=[], value=None)
 
         summary = state.results_manager.get_summary()
 
-        stats_text = f"""
-### Session Summary
+        # Progress summary (left column)
+        progress_text = f"""
+### Session Progress
 
 - **Images Processed:** {summary['total_images']} / {len(state.image_paths)}
 - **Total Particles:** {summary['total_particles']}
 - **Average Particles/Image:** {summary['avg_particles_per_image']:.1f}
-- **Min Particles:** {summary['min_particles']}
-- **Max Particles:** {summary['max_particles']}
+- **Min Particles/Image:** {summary['min_particles']}
+- **Max Particles/Image:** {summary['max_particles']}
         """
+
+        # Aggregate particle statistics (right column)
+        # Collect all particle diameters from all images
+        all_diameters = []
+        for idx, row in results_df.iterrows():
+            diams_nm = eval(row['equiv_diameters_nm']) if row['equiv_diameters_nm'] != '[]' else []
+            all_diameters.extend(diams_nm)
+
+        if len(all_diameters) > 0:
+            import numpy as np
+            mean_diam = np.mean(all_diameters) / 1000  # Convert to μm
+            median_diam = np.median(all_diameters) / 1000
+            std_diam = np.std(all_diameters) / 1000
+            min_diam = np.min(all_diameters) / 1000
+            max_diam = np.max(all_diameters) / 1000
+
+            particle_stats_text = f"""
+### Aggregate Particle Statistics
+
+- **Mean Diameter:** {mean_diam:.3f} μm
+- **Median Diameter:** {median_diam:.3f} μm
+- **Std Deviation:** {std_diam:.3f} μm
+- **Min Diameter:** {min_diam:.3f} μm
+- **Max Diameter:** {max_diam:.3f} μm
+            """
+        else:
+            particle_stats_text = "### Aggregate Particle Statistics\n\nNo particle data available"
 
         display_df = results_df[['file_name', 'num_particles']].copy()
         display_df.columns = ['Filename', 'Particle Count']
 
-        return display_df, stats_text
+        # Create dropdown choices for delete functionality
+        # Format: "index: filename" so user can see both
+        dropdown_choices = [f"{i}: {row['file_name']}" for i, row in results_df.iterrows()]
+
+        return display_df, progress_text, particle_stats_text, gr.update(choices=dropdown_choices, value=None)
 
     except Exception as e:
-        return None, f"❌ Error: {str(e)}"
+        return None, f"❌ Error: {str(e)}", f"❌ Error: {str(e)}", gr.update(choices=[], value=None)
+
+
+def delete_result_row(selected_item):
+    """Delete a specific row from the results table."""
+    try:
+        if state.results_manager is None:
+            return None, None, None, gr.update(), "❌ No results available"
+
+        if selected_item is None:
+            return None, None, None, gr.update(), "❌ Please select a row to delete"
+
+        results_df = state.results_manager.get_results()
+
+        if len(results_df) == 0:
+            return None, None, None, gr.update(), "❌ No results to delete"
+
+        # Parse the selection format "index: filename"
+        idx_str = selected_item.split(":")[0].strip()
+        idx = int(idx_str)
+
+        # Get filename for confirmation message
+        filename = results_df.loc[idx, 'file_name']
+
+        # Delete the row
+        state.results_manager.delete_result(idx)
+
+        # Get updated summary (includes new dropdown choices)
+        display_df, progress_text, particle_stats_text, dropdown_update = get_session_summary()
+
+        return display_df, progress_text, particle_stats_text, dropdown_update, f"✅ Deleted: {filename}"
+
+    except IndexError as e:
+        return None, None, None, gr.update(), f"❌ Index error: {str(e)}"
+    except Exception as e:
+        return None, None, None, gr.update(), f"❌ Error: {str(e)}"
 
 
 def export_results():
     """Export all results to CSV."""
     try:
         if state.results_manager is None or len(state.results_manager.results_df) == 0:
-            return None, "❌ No results to export"
+            return None
 
         csv_path = state.results_manager.csv_file
-        return csv_path, f"✅ Results saved to: {csv_path}"
+        return csv_path
 
     except Exception as e:
-        return None, f"❌ Error: {str(e)}"
+        return None
 
 
 def check_and_remove_duplicates():
@@ -1055,8 +1193,8 @@ def check_and_remove_duplicates():
         if len(duplicates) == 0:
             return None, "✅ No duplicate entries found"
 
-        # Delete duplicates (keep first occurrence)
-        deleted_count = state.results_manager.delete_duplicates(keep='first')
+        # Delete duplicates (keep last occurrence)
+        deleted_count = state.results_manager.delete_duplicates(keep='last')
 
         # Get updated summary
         results_df = state.results_manager.get_results()
@@ -1066,7 +1204,7 @@ def check_and_remove_duplicates():
             display_df = results_df[['file_name', 'num_particles']].copy()
             display_df.columns = ['Filename', 'Particle Count']
 
-        return display_df, f"✅ Removed {deleted_count} duplicate entries (kept first occurrence)"
+        return display_df, f"✅ Removed {deleted_count} duplicate entries (kept last occurrence)"
 
     except Exception as e:
         return None, f"❌ Error: {str(e)}"
@@ -1151,7 +1289,7 @@ def create_interface():
                 gr.Markdown("## Scale Detection and Segmentation")
 
                 current_image = gr.Image(
-                    label="Current Image (Red line = scale bar | Green box = analysis region)",
+                    label="",
                     type="numpy"
                 )
 
@@ -1178,7 +1316,7 @@ def create_interface():
                         segment_btn = gr.Button("🤖 Segment with SAM", variant="primary", size="lg")
                         segment_status = gr.Textbox(label="Status", interactive=False)
 
-                mask_viz = gr.Image(label="Mask Candidates")
+                mask_viz = gr.Image(label="")
 
                 with gr.Row():
                     mask_choice = gr.Radio(
@@ -1244,7 +1382,7 @@ def create_interface():
                     info="Uncheck to hide numbers for better visibility of small particles"
                 )
 
-                refine_viz = gr.Image(label="Particle Visualization - Click to Interact", type="numpy")
+                refine_viz = gr.Image(label="", type="numpy")
 
                 with gr.Row():
                     apply_btn = gr.Button("✓ Apply Changes", variant="primary", size="lg")
@@ -1291,16 +1429,37 @@ def create_interface():
                 gr.Markdown("## Session Summary (All Images)")
 
                 refresh_btn = gr.Button("🔄 Refresh Summary")
-                summary_stats = gr.Markdown("No results yet")
+
+                # Two-column layout for session statistics
+                with gr.Row():
+                    with gr.Column():
+                        summary_progress = gr.Markdown("No results yet")
+                    with gr.Column():
+                        summary_particle_stats = gr.Markdown("No particle statistics yet")
+
                 session_table = gr.Dataframe(label="All Processed Images")
+
+                with gr.Row():
+                    delete_row_dropdown = gr.Dropdown(
+                        label="Select Row to Delete",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        info="Choose a file to delete from results"
+                    )
+                    delete_row_btn = gr.Button("❌ Delete Selected Row", variant="stop")
+
+                delete_row_status = gr.Textbox(label="Delete Status", interactive=False)
 
                 with gr.Row():
                     remove_duplicates_btn = gr.Button("🧹 Remove Duplicate Entries", variant="secondary")
                     duplicates_status = gr.Textbox(label="Duplicate Removal Status", interactive=False)
 
+                gr.Markdown("---")
+                gr.Markdown("## Export Results")
+
                 with gr.Row():
                     export_btn = gr.Button("📥 Export All Results", variant="primary")
-                    export_status = gr.Textbox(label="Export Status", interactive=False)
                     export_file = gr.File(label="Download CSV")
 
             # ================================================================
@@ -1314,7 +1473,7 @@ def create_interface():
                     update_plots_btn = gr.Button("🔄 Update Plots", variant="primary", size="lg")
                     plot_status = gr.Textbox(label="Status", interactive=False)
 
-                histogram_plot = gr.Image(label="Size Distribution Histograms", type="numpy")
+                histogram_plot = gr.Image(label="", type="numpy")
 
         # ================================================================
         # Event Handlers
@@ -1336,7 +1495,7 @@ def create_interface():
         # Gallery tab
         gallery.select(
             select_image_from_gallery,
-            outputs=[current_image, selected_image_info, tabs]
+            outputs=[current_image, selected_image_info, tabs, click_mode_radio]
         )
 
         # Processing tab
@@ -1379,6 +1538,11 @@ def create_interface():
             set_point_type,
             inputs=[point_type_radio],
             outputs=[refine_status]
+        )
+
+        reset_points_btn.click(
+            reset_point_refine,
+            outputs=[refine_viz, refine_status]
         )
 
         show_numbers_checkbox.change(
@@ -1427,7 +1591,13 @@ def create_interface():
 
         refresh_btn.click(
             get_session_summary,
-            outputs=[session_table, summary_stats]
+            outputs=[session_table, summary_progress, summary_particle_stats, delete_row_dropdown]
+        )
+
+        delete_row_btn.click(
+            delete_result_row,
+            inputs=[delete_row_dropdown],
+            outputs=[session_table, summary_progress, summary_particle_stats, delete_row_dropdown, delete_row_status]
         )
 
         remove_duplicates_btn.click(
@@ -1437,7 +1607,7 @@ def create_interface():
 
         export_btn.click(
             export_results,
-            outputs=[export_file, export_status]
+            outputs=[export_file]
         )
 
     return app

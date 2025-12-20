@@ -1,48 +1,177 @@
-# CNT Particle Segmentation Tool
+# CNT Particle Analysis Toolkit
 
-Interactive tool for segmenting and analyzing carbon nanotube particles in electron microscopy images using Meta's Segment Anything Model (SAM).
+> **AI-powered segmentation and analysis of carbon nanotube (CNT) particles in electron microscopy images using Meta's Segment Anything Model (SAM)**
 
-## What It Does
+This toolkit provides both a **Python package** for programmatic access and a **web-based GUI** for interactive analysis.
 
-- Loads SEM/TEM images and detects scale bars automatically
-- Uses SAM to segment CNT particles with interactive mask selection
-- Counts particles and measures sizes (area, diameter)
-- Exports results to CSV for batch analysis
+---
 
-## Requirements
+## 🚀 Quick Start
 
-- Python 3.10+
-- PyTorch
-- Segment Anything Model
-- OpenCV, scikit-image, ipywidgets
+### Option 1: Web Application (Recommended for most users)
 
-## Quick Start
 ```bash
-# Create environment
-conda create -n cnt_analysis python=3.10
-conda activate cnt_analysis
+# Navigate to the app directory
+cd cnt_analysis_app
 
 # Install dependencies
-conda install -c conda-forge numpy pandas matplotlib opencv scikit-image ipywidgets
-pip install git+https://github.com/facebookresearch/segment-anything.git
-pip install easyocr
+pip install -r requirements.txt
 
-# Download SAM model (choose one)
-curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+# Download SAM model
+curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 
-# Launch Jupyter
-jupyter lab
+# Launch the web interface
+python app_v2.py
 ```
 
-## Usage
+Open your browser to `http://127.0.0.1:7860`
 
-1. Run initialization cell to load SAM model
-2. Set your image folder path
-3. Process images interactively (Proceed/Skip/Jump)
-4. Select best segmentation mask
-5. Review particle measurements
-6. Export results to CSV
+### Option 2: Python Package
 
-## Citation
+```bash
+# Navigate to the package directory
+cd sem_particle_analysis
 
-Built using Meta AI's Segment Anything Model (Kirillov et al., 2023).
+# Install the package
+pip install -e .
+
+# Use in your Python code
+from sem_particle_analysis import SAMModel, ParticleAnalyzer
+```
+
+---
+
+## 📦 What's Included
+
+### 1. **Gradio Web Application** (`cnt_analysis_app/`)
+
+A beautiful, production-ready web interface with:
+
+- **🤖 AI-Powered Segmentation**: Automatic particle detection using SAM
+- **📏 Auto Scale Detection**: OCR-based scale bar recognition and calibration
+- **✏️ Interactive Refinement**: Add, delete, merge particles; point-based refinement with live preview
+- **📊 Real-time Analysis**: Particle measurements with histograms and statistics
+- **💾 Batch Processing**: Process multiple images with session tracking
+- **📈 Results Management**: CSV export, duplicate removal, row deletion
+- **↩️ Undo/Redo**: Click-level undo for refinement operations
+- **🎯 Advanced Features**: Edge particle removal, particle number toggle, size filtering
+
+See [`cnt_analysis_app/README.md`](cnt_analysis_app/README.md) for detailed usage instructions.
+
+### 2. **Python Package** (`sem_particle_analysis/`)
+
+A clean, modular Python library for programmatic access:
+
+- Scale detection and image preprocessing
+- SAM-based particle segmentation
+- Particle analysis and measurements
+- Results export to CSV
+- Interactive Jupyter notebook widgets (legacy)
+
+See [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md) for API documentation.
+
+---
+
+## 🎯 Key Features
+
+### Automatic Scale Detection
+- OCR-based scale bar detection using EasyOCR
+- Support for both horizontal and vertical scale bars
+- Manual override option for non-standard scales
+
+### Advanced Particle Refinement
+- **Delete Mode**: Click particles to remove false positives
+- **Add Mode**: Click to add missed particles
+- **Merge Mode**: Combine touching particles
+- **Point Refine Mode**: Iterative refinement with positive/negative points
+- Undo individual clicks before applying changes
+- Real-time visualization with live previews
+
+### Comprehensive Analysis
+- Particle count and size distribution
+- Area measurements (pixels and nm²)
+- Equivalent diameter calculations
+- Summary statistics (mean, median, std, min, max)
+- Aggregate statistics across all images in session
+
+### Results Management
+- Auto-save to CSV after each image
+- Session-wide tracking and export
+- Duplicate detection and removal
+- Individual row deletion
+- State persistence across sessions
+
+---
+
+## 💻 System Requirements
+
+- **Python**: 3.8 or higher
+- **GPU**: Optional but recommended (CUDA or Apple Silicon MPS)
+- **RAM**: 8GB minimum, 16GB+ recommended
+- **Storage**: ~3GB for SAM model + your images
+
+---
+
+## 📚 Documentation
+
+- **Web App Guide**: [`cnt_analysis_app/README.md`](cnt_analysis_app/README.md)
+- **Quick Start**: [`cnt_analysis_app/QUICKSTART.md`](cnt_analysis_app/QUICKSTART.md)
+- **User Guide**: [`cnt_analysis_app/USER_GUIDE.md`](cnt_analysis_app/USER_GUIDE.md)
+- **Python API**: [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md)
+- **Installation**: [`sem_particle_analysis/INSTALL.md`](sem_particle_analysis/INSTALL.md)
+
+---
+
+## 🔧 Supported Image Formats
+
+- `.tif`, `.tiff`
+- `.png`
+- `.jpg`, `.jpeg`
+
+---
+
+## 📊 Output Data
+
+Results are exported as CSV files containing:
+- Filename
+- Particle count
+- Individual particle areas (pixels and nm²)
+- Equivalent diameters (pixels and nm)
+- Easy integration with Excel, Python, R, etc.
+
+---
+
+## 🎓 Citation
+
+This tool uses Meta's Segment Anything Model (SAM):
+
+```bibtex
+@article{kirillov2023segment,
+  title={Segment Anything},
+  author={Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila and Mao, Hanzi and Rolland, Chloe and Gustafson, Laura and Xiao, Tete and Whitehead, Spencer and Berg, Alexander C. and Lo, Wan-Yen and Doll{\'a}r, Piotr and Girshick, Ross},
+  journal={arXiv:2304.02643},
+  year={2023}
+}
+```
+
+---
+
+## 📝 License
+
+MIT License - See LICENSE file for details
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
+
+## 🙏 Acknowledgments
+
+Built with:
+- [Segment Anything Model](https://segment-anything.com/) by Meta AI
+- [Gradio](https://gradio.app/) for the web interface
+- [EasyOCR](https://github.com/JaidedAI/EasyOCR) for scale detection
+- [scikit-image](https://scikit-image.org/) for image processing
