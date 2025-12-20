@@ -1,16 +1,37 @@
 # CNT Particle Analysis - Gradio Application
 
-A beautiful, user-friendly web interface for segmenting and analyzing carbon nanotube (CNT) particles in electron microscopy images using Meta's Segment Anything Model (SAM).
+A beautiful, production-ready web interface for segmenting and analyzing carbon nanotube (CNT) particles in electron microscopy images using Meta's Segment Anything Model (SAM).
 
-## Features
+## ✨ Features
 
+### Core Functionality
 - **🤖 AI-Powered Segmentation**: Leverages Meta's SAM for accurate particle detection
 - **📏 Automatic Scale Detection**: Uses OCR to detect and calibrate scale bars
 - **🔍 Interactive Mask Selection**: Choose from 3 AI-generated mask candidates
 - **📊 Comprehensive Analysis**: Particle count, area, diameter measurements in nm
 - **📁 Batch Processing**: Process multiple images sequentially with navigation
-- **💾 Auto-Save Results**: Automatically exports data to CSV after each image
-- **📈 Session Tracking**: View summary statistics across all processed images
+
+### Advanced Refinement Tools
+- **✏️ Delete Mode**: Click particles to remove false positives
+- **➕ Add Mode**: Click empty areas to add missed particles
+- **🔗 Merge Mode**: Select multiple touching particles to merge them
+- **🎯 Point Refine Mode**: Iterative refinement with positive/negative points
+- **↩️ Click-Level Undo**: Undo individual clicks before applying changes
+- **🧹 Clear Pending**: Reset all pending changes
+- **🔄 Reset Points**: Clear point refinement state
+
+### Results Management
+- **💾 Auto-Save**: Results automatically saved to CSV after each image
+- **📈 Session Summary**: View aggregate statistics across all processed images
+- **📊 Duplicate Detection**: Automatically find and remove duplicate entries
+- **❌ Row Deletion**: Delete individual results with dropdown selector
+- **📥 Export Options**: Export all results or download processed CSV
+
+### Visualization Features
+- **🔢 Particle Number Toggle**: Show/hide particle numbers for better visibility
+- **📐 Edge Particle Removal**: Remove particles near image edges with buffer control
+- **📊 Size Distribution**: Real-time histograms of particle sizes
+- **🎨 Clean Interface**: No blocking labels on images for clear visualization
 
 ## Screenshot
 
@@ -75,7 +96,16 @@ curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 ### Launch the Application
 
 ```bash
-python app.py
+python app_v2.py
+```
+
+Or use the convenience scripts:
+```bash
+# On macOS/Linux
+./launch.sh
+
+# On Windows
+launch.bat
 ```
 
 The application will start on `http://127.0.0.1:7860`
@@ -117,10 +147,15 @@ The application will start on `http://127.0.0.1:7860`
 
 ```
 cnt_analysis_app/
-├── app.py                  # Main Gradio application
+├── app_v2.py               # Main Gradio application (production version)
 ├── visualization.py        # Visualization helper functions
 ├── requirements.txt        # Python dependencies
-└── README.md              # This file
+├── launch.sh              # macOS/Linux launch script
+├── launch.bat             # Windows launch script
+├── README.md              # This file
+├── QUICKSTART.md          # Quick start guide
+├── USER_GUIDE.md          # Detailed user guide
+└── PROJECT_SUMMARY.md     # Project overview
 ```
 
 ## Output Files
