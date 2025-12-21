@@ -1,7 +1,7 @@
 #!/bin/bash
-# CNT Particle Analysis App Launcher (macOS/Linux)
+# SEM Particle Analysis App Launcher (macOS/Linux)
 
-echo "🔬 Starting CNT Particle Analysis Application..."
+echo "🔬 Starting SEM Particle Analysis Application..."
 echo ""
 
 # Check if Python is installed
@@ -27,4 +27,4 @@ echo "Press Ctrl+C to stop the application"
 echo ""
 
 # Launch the app
-python3 app_v2.py
+python3 sem_analysis_app.py

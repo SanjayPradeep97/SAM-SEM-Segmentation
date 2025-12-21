@@ -1,16 +1,16 @@
-# CNT Particle Analysis - Gradio App Project Summary
+# SEM Particle Analysis - Gradio App Project Summary
 
 ## Overview
 
-Successfully converted the Jupyter notebook-based CNT particle segmentation tool into a production-quality Gradio web application with a beautiful, intuitive interface.
+Successfully converted the Jupyter notebook-based particle segmentation tool into a production-quality Gradio web application with a beautiful, intuitive interface.
 
 ## What Was Built
 
 ### Application Structure
 
 ```
-cnt_analysis_app/
-├── app.py                  # Main Gradio application (700+ lines)
+sem_analysis_app/
+├── sem_analysis_app.py    # Main Gradio application (700+ lines)
 ├── visualization.py        # Visualization helper functions
 ├── requirements.txt        # Python dependencies
 ├── README.md              # Comprehensive documentation
@@ -175,7 +175,7 @@ Designed for rapid batch processing:
 ## Files Created
 
 ### Application Files
-1. **app.py** (700 lines)
+1. **sem_analysis_app.py** (700 lines)
    - Main Gradio interface
    - Event handlers
    - State management
@@ -311,17 +311,17 @@ Designed for rapid batch processing:
 
 ### Local Development
 ```bash
-cd cnt_analysis_app
-python app.py
+cd sem_analysis_app
+python sem_analysis_app.py
 ```
 
 ### Production Deployment
 ```bash
 # Using Gradio's built-in server
-python app.py
+python sem_analysis_app.py
 
 # Or with custom settings
-python -c "from app import create_interface; create_interface().launch(server_name='0.0.0.0', server_port=8080)"
+python -c "from sem_analysis_app import create_interface; create_interface().launch(server_name='0.0.0.0', server_port=8080)"
 ```
 
 ### Docker Deployment (Future)
@@ -331,7 +331,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["python", "app.py"]
+CMD ["python", "sem_analysis_app.py"]
 ```
 
 ## Maintenance Notes

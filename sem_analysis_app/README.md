@@ -1,6 +1,6 @@
-# CNT Particle Analysis - Gradio Application
+# SEM Particle Analysis - Gradio Application
 
-A beautiful, production-ready web interface for segmenting and analyzing carbon nanotube (CNT) particles in electron microscopy images using Meta's Segment Anything Model (SAM).
+A beautiful, production-ready web interface for segmenting and analyzing particles in electron microscopy images using Meta's Segment Anything Model (SAM).
 
 ## ✨ Features
 
@@ -55,15 +55,15 @@ The application provides a complete workflow:
 
 ```bash
 git clone <repository-url>
-cd cnt_analysis_app
+cd sem_analysis_app
 ```
 
 ### Step 2: Create Virtual Environment
 
 ```bash
 # Using conda (recommended)
-conda create -n cnt_analysis python=3.10
-conda activate cnt_analysis
+conda create -n sem_analysis python=3.10
+conda activate sem_analysis
 
 # Or using venv
 python -m venv venv
@@ -96,7 +96,7 @@ curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 ### Launch the Application
 
 ```bash
-python app_v2.py
+python sem_analysis_app.py
 ```
 
 Or use the convenience scripts:
@@ -146,8 +146,8 @@ The application will start on `http://127.0.0.1:7860`
 ## File Structure
 
 ```
-cnt_analysis_app/
-├── app_v2.py               # Main Gradio application (production version)
+sem_analysis_app/
+├── sem_analysis_app.py     # Main Gradio application
 ├── visualization.py        # Visualization helper functions
 ├── requirements.txt        # Python dependencies
 ├── launch.sh              # macOS/Linux launch script
