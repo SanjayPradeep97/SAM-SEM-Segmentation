@@ -1,4 +1,4 @@
-# CNT Particle Analysis - User Guide
+# SEM Particle Analysis - User Guide
 
 ## Table of Contents
 1. [Getting Started](#getting-started)
@@ -16,13 +16,13 @@
 
 1. **Open Terminal/Command Prompt**
    ```bash
-   cd cnt_analysis_app
-   python app.py
+   cd sem_analysis_app
+   python sem_analysis_app.py
    ```
 
 2. **Open Browser**
    - Navigate to: `http://127.0.0.1:7860`
-   - You should see the CNT Particle Analysis interface
+   - You should see the SEM Particle Analysis interface
 
 3. **Have Ready**
    - Path to SAM checkpoint file (e.g., `sam_vit_h_4b8939.pth`)

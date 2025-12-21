@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get up and running with the CNT Particle Analysis app in 5 minutes!
+Get up and running with the SEM Particle Analysis app in 5 minutes!
 
 ## Prerequisites Checklist
 
@@ -14,7 +14,7 @@ Get up and running with the CNT Particle Analysis app in 5 minutes!
 
 ```bash
 # Navigate to the app folder
-cd cnt_analysis_app
+cd sem_analysis_app
 
 # Install requirements
 pip install -r requirements.txt
@@ -33,7 +33,7 @@ curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 ## Launch the App
 
 ```bash
-python app.py
+python sem_analysis_app.py
 ```
 
 Open your browser to: **http://127.0.0.1:7860**

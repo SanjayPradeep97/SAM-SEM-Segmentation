@@ -1,8 +1,8 @@
 @echo off
-REM CNT Particle Analysis App Launcher (Windows)
+REM SEM Particle Analysis App Launcher (Windows)
 
 echo ============================================
-echo CNT Particle Analysis Application
+echo SEM Particle Analysis Application
 echo ============================================
 echo.
 
@@ -30,6 +30,6 @@ echo Press Ctrl+C to stop the application
 echo.
 
 REM Launch the app
-python app_v2.py
+python sem_analysis_app.py
 
 pause

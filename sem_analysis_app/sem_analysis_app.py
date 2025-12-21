@@ -1,7 +1,7 @@
 """
-CNT Particle Analysis - Redesigned Gradio Application v2
+SEM Particle Analysis - Gradio Application
 
-A professional tabbed interface for CNT particle segmentation and analysis.
+A professional tabbed interface for particle segmentation and analysis.
 Features: File browsers, image gallery, interactive refinement, and comprehensive results.
 """
 

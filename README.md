@@ -1,6 +1,6 @@
-# CNT Particle Analysis Toolkit
+# SAM-SEM Segmentation Toolkit
 
-> **AI-powered segmentation and analysis of carbon nanotube (CNT) particles in electron microscopy images using Meta's Segment Anything Model (SAM)**
+> **AI-powered segmentation and analysis of particles in electron microscopy images using Meta's Segment Anything Model (SAM)**
 
 This toolkit provides both a **Python package** for programmatic access and a **web-based GUI** for interactive analysis.
 
@@ -12,7 +12,7 @@ This toolkit provides both a **Python package** for programmatic access and a **
 
 ```bash
 # Navigate to the app directory
-cd cnt_analysis_app
+cd sem_analysis_app
 
 # Install dependencies
 pip install -r requirements.txt
@@ -21,7 +21,7 @@ pip install -r requirements.txt
 curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 
 # Launch the web interface
-python app_v2.py
+python sem_analysis_app.py
 ```
 
 Open your browser to `http://127.0.0.1:7860`
@@ -43,7 +43,7 @@ from sem_particle_analysis import SAMModel, ParticleAnalyzer
 
 ## 📦 What's Included
 
-### 1. **Gradio Web Application** (`cnt_analysis_app/`)
+### 1. **Gradio Web Application** (`sem_analysis_app/`)
 
 A beautiful, production-ready web interface with:
 
@@ -56,7 +56,7 @@ A beautiful, production-ready web interface with:
 - **↩️ Undo/Redo**: Click-level undo for refinement operations
 - **🎯 Advanced Features**: Edge particle removal, particle number toggle, size filtering
 
-See [`cnt_analysis_app/README.md`](cnt_analysis_app/README.md) for detailed usage instructions.
+See [`sem_analysis_app/README.md`](sem_analysis_app/README.md) for detailed usage instructions.
 
 ### 2. **Python Package** (`sem_particle_analysis/`)
 
@@ -114,9 +114,9 @@ See [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md) for API
 
 ## 📚 Documentation
 
-- **Web App Guide**: [`cnt_analysis_app/README.md`](cnt_analysis_app/README.md)
-- **Quick Start**: [`cnt_analysis_app/QUICKSTART.md`](cnt_analysis_app/QUICKSTART.md)
-- **User Guide**: [`cnt_analysis_app/USER_GUIDE.md`](cnt_analysis_app/USER_GUIDE.md)
+- **Web App Guide**: [`sem_analysis_app/README.md`](sem_analysis_app/README.md)
+- **Quick Start**: [`sem_analysis_app/QUICKSTART.md`](sem_analysis_app/QUICKSTART.md)
+- **User Guide**: [`sem_analysis_app/USER_GUIDE.md`](sem_analysis_app/USER_GUIDE.md)
 - **Python API**: [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md)
 - **Installation**: [`sem_particle_analysis/INSTALL.md`](sem_particle_analysis/INSTALL.md)
 
