@@ -64,6 +64,7 @@ class AppState:
         self.analyzer = None
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
         self.show_particle_numbers = True  # Whether to show particle numbers in visualization
+        self.crop_percent = 7.0  # Percentage to crop from bottom (for scale bar removal)
 
         # Refinement state
         self.click_mode = "delete"  # "delete", "add", "merge", "point_refine"
@@ -225,13 +226,32 @@ def load_images_from_folder(file_input, progress=gr.Progress()):
 
             # If list of files, use them directly
             if isinstance(file_input, list):
-                state.image_paths = sorted(file_input)
+                # Extract paths from File objects if needed
+                state.image_paths = []
+                for item in file_input:
+                    # Handle both string paths and File objects
+                    if isinstance(item, str):
+                        path = os.path.abspath(item)
+                        state.image_paths.append(path)
+                    elif hasattr(item, 'name'):  # Gradio File object
+                        path = os.path.abspath(item.name)
+                        state.image_paths.append(path)
+                    else:
+                        path = os.path.abspath(str(item))
+                        state.image_paths.append(path)
+
+                state.image_paths = sorted(state.image_paths)
                 # Get folder from first file for CSV storage
-                folder_for_csv = os.path.dirname(file_input[0])
+                folder_for_csv = os.path.dirname(state.image_paths[0])
             else:
                 # Single file
-                state.image_paths = [file_input]
-                folder_for_csv = os.path.dirname(file_input)
+                if hasattr(file_input, 'name'):
+                    path = os.path.abspath(file_input.name)
+                    state.image_paths = [path]
+                else:
+                    path = os.path.abspath(str(file_input))
+                    state.image_paths = [path]
+                folder_for_csv = os.path.dirname(state.image_paths[0])
 
             source = "selected files"
 
@@ -240,6 +260,21 @@ def load_images_from_folder(file_input, progress=gr.Progress()):
 
         if not state.image_paths:
             return f"❌ No images found", None
+
+        # Validate that all image files exist and are readable
+        valid_paths = []
+        invalid_count = 0
+        for img_path in state.image_paths:
+            if os.path.exists(img_path) and os.path.isfile(img_path):
+                valid_paths.append(img_path)
+            else:
+                print(f"⚠️  Skipping non-existent file: {img_path}")
+                invalid_count += 1
+
+        state.image_paths = valid_paths
+
+        if not state.image_paths:
+            return f"❌ No valid images found ({invalid_count} files skipped)", None
 
         state.current_index = 0
         state.processed_images = {}
@@ -261,6 +296,8 @@ def load_images_from_folder(file_input, progress=gr.Progress()):
         return status, gallery_data
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return f"❌ Error: {str(e)}", None
 
 
@@ -277,6 +314,19 @@ def create_image_gallery():
     for idx, img_path in enumerate(state.image_paths):
         # Create thumbnail
         try:
+            # Verify file exists and is readable
+            if not os.path.exists(img_path):
+                print(f"File not found: {img_path}")
+                continue
+
+            # Load image as PIL Image for Gradio Gallery
+            # This ensures compatibility across Windows and macOS
+            img = Image.open(img_path)
+
+            # Convert to RGB if needed (handles RGBA, grayscale, etc.)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+
             filename = os.path.basename(img_path)
 
             # Add status indicator to filename
@@ -286,9 +336,12 @@ def create_image_gallery():
             else:
                 label = f"⚪ {filename}"
 
-            gallery_items.append((img_path, label))
+            # Gradio Gallery expects (image, caption) tuples where image is PIL Image or path
+            gallery_items.append((img, label))
         except Exception as e:
             print(f"Error loading {img_path}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     return gallery_items
@@ -322,10 +375,10 @@ def detect_scale_auto(progress=gr.Progress()):
     """Detect scale automatically - tries TIFF metadata first, then OCR."""
     try:
         if state.current_image is None:
-            return "❌ No image loaded", "", None
+            return "❌ No image loaded", None
 
         if state.scale_detector is None:
-            return "❌ Scale detector not initialized", "", None
+            return "❌ Scale detector not initialized", None
 
         # Get current file path for metadata extraction
         file_path = state.image_paths[state.current_index] if state.image_paths else None
@@ -340,40 +393,48 @@ def detect_scale_auto(progress=gr.Progress()):
                 method='auto'
             )
         except ValueError as e:
-            return f"❌ Scale detection failed: {str(e)}", "", None
+            return f"❌ Scale detection failed: {str(e)}", None
 
         progress(0.7, desc="Cropping scale bar and creating visualization...")
-        state.cropped_image = state.scale_detector.crop_scale_bar(state.current_image)
+        state.cropped_image = state.scale_detector.crop_scale_bar(
+            state.current_image,
+            crop_percent=state.crop_percent
+        )
 
-        # Create visualization
-        from visualization import visualize_scale_detection
-        scale_viz = visualize_scale_detection(state.current_image, state.scale_info)
+        # Create visualization only if OCR was used (metadata detection doesn't have region info)
+        method_used = state.scale_info.get('method', 'unknown')
+
+        if method_used == 'ocr' and 'region' in state.scale_info:
+            from visualization import visualize_scale_detection
+            scale_viz = visualize_scale_detection(state.current_image, state.scale_info)
+        else:
+            # For metadata detection, just show the cropped image
+            scale_viz = state.cropped_image
 
         progress(1.0, desc="Complete!")
 
         # Format status message based on detection method
-        method_used = state.scale_info.get('method', 'unknown')
         conversion = state.scale_info['conversion']
         scale_nm = state.scale_info.get('scale_nm') or state.scale_info.get('pixel_size_nm', 0)
 
         if method_used == 'metadata':
             manufacturer = state.scale_info.get('manufacturer', 'unknown')
             confidence = state.scale_info.get('confidence', 'unknown')
+            metadata_source = state.scale_info.get('metadata_source', 'TIFF metadata')
             if manufacturer != 'unknown':
-                status = f"✅ From TIFF metadata ({manufacturer}): {conversion:.4f} nm/pixel [{confidence} confidence]"
+                status = f"✅ From {metadata_source} ({manufacturer}): {conversion:.4f} nm/pixel [{confidence} confidence]"
             else:
-                status = f"✅ From TIFF metadata: {conversion:.4f} nm/pixel [{confidence} confidence]"
+                status = f"✅ From {metadata_source}: {conversion:.4f} nm/pixel [{confidence} confidence]"
         else:
             status = f"✅ From OCR: {scale_nm:.0f} nm scale bar ({conversion:.4f} nm/pixel)"
 
         return (
             status,
-            f"{scale_nm:.0f}" if scale_nm else f"{conversion:.4f}",
             scale_viz
         )
 
     except Exception as e:
-        return f"❌ Error: {str(e)}", "", None
+        return f"❌ Error: {str(e)}", None
 
 
 def set_manual_scale(scale_nm_text):
@@ -689,6 +750,12 @@ def set_min_particle_size(size):
     """Set minimum particle size for filtering."""
     state.min_particle_size = int(size)
     return f"✓ Minimum particle size set to {int(size)} pixels"
+
+
+def set_crop_percent(percent):
+    """Set crop percentage for scale bar removal."""
+    state.crop_percent = float(percent)
+    return f"✓ Bottom crop set to {percent:.1f}%"
 
 
 def toggle_particle_numbers(show_numbers):
@@ -1301,7 +1368,8 @@ def create_interface():
                     height=800,
                     object_fit="contain",
                     show_label=True,
-                    allow_preview=True
+                    allow_preview=True,
+                    type="pil"  # Explicitly set to PIL Image type for cross-platform compatibility
                 )
 
                 selected_image_info = gr.Textbox(label="Selected Image", interactive=False)
@@ -1320,12 +1388,16 @@ def create_interface():
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### Step 1: Scale Detection")
+                        crop_percent_slider = gr.Slider(
+                            minimum=0,
+                            maximum=20,
+                            value=7.0,
+                            step=0.5,
+                            label="Bottom Crop Percentage (%)",
+                            info="Percentage of image bottom to crop (removes scale bar region)"
+                        )
                         detect_btn = gr.Button("🔍 Auto-Detect Scale", variant="primary")
                         scale_status = gr.Textbox(label="Status", interactive=False)
-
-                        with gr.Row():
-                            manual_scale = gr.Textbox(label="Manual Scale (nm)", placeholder="500")
-                            set_manual_btn = gr.Button("Set Manual")
 
                     with gr.Column():
                         gr.Markdown("### Step 2: Segmentation")
@@ -1523,14 +1595,14 @@ def create_interface():
         )
 
         # Processing tab
-        detect_btn.click(
-            detect_scale_auto,
-            outputs=[scale_status, manual_scale, current_image]
+        crop_percent_slider.change(
+            set_crop_percent,
+            inputs=[crop_percent_slider],
+            outputs=[scale_status]
         )
 
-        set_manual_btn.click(
-            set_manual_scale,
-            inputs=[manual_scale],
+        detect_btn.click(
+            detect_scale_auto,
             outputs=[scale_status, current_image]
         )
 

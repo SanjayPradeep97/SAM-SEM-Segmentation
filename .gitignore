@@ -20,6 +20,7 @@ ENV/
 # IDEs
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -30,7 +31,9 @@ Thumbs.db
 
 # Project specific
 *.pth
+sam_weights/*.pth
 analysis_results*.csv
+.app_state.json
 .analysis_state.json
 anaconda_projects/
 
@@ -38,7 +41,9 @@ anaconda_projects/
 Extrusion data for plastic blocks dinning hall plastics/
 
 # Test scripts
-test_scale_extraction.py
+test_*.py
+*.txt
+!requirements.txt
 
 # Gradio cache
 gradio_cached_examples/

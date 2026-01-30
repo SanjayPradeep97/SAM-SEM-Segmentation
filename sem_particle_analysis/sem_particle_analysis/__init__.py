@@ -10,7 +10,14 @@ from .scale_detection import ScaleDetector
 from .segmentation import ParticleSegmenter
 from .analysis import ParticleAnalyzer
 from .data_manager import ResultsManager
-from .interactive import InteractiveRefiner
+
+# Optional import for Jupyter notebook support
+try:
+    from .interactive import InteractiveRefiner
+    _has_interactive = True
+except ImportError:
+    InteractiveRefiner = None
+    _has_interactive = False
 
 __version__ = "0.1.0"
 __all__ = [
@@ -19,5 +26,8 @@ __all__ = [
     "ParticleSegmenter",
     "ParticleAnalyzer",
     "ResultsManager",
-    "InteractiveRefiner",
 ]
+
+# Only add InteractiveRefiner if ipywidgets is available
+if _has_interactive:
+    __all__.append("InteractiveRefiner")

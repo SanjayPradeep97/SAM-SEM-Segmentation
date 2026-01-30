@@ -6,6 +6,9 @@ import os
 import torch
 from segment_anything import sam_model_registry, SamPredictor
 
+# Fix OpenMP library conflict (common with Intel MKL and PyTorch)
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 
 class SAMModel:
     """
@@ -66,6 +69,11 @@ class SAMModel:
 
         Priority: Apple Silicon GPU (MPS) > CUDA GPU > CPU
 
+        Handles compatibility across platforms:
+        - macOS: Uses MPS (Metal Performance Shaders) for Apple Silicon
+        - Windows/Linux: Uses CUDA for NVIDIA GPUs
+        - Fallback: CPU if no GPU available
+
         Args:
             device (str or torch.device, optional): Requested device
 
@@ -73,20 +81,37 @@ class SAMModel:
             torch.device: Selected device
         """
         if device is not None:
-            return torch.device(device)
+            requested_device = torch.device(device)
+            print(f"Using requested device: {requested_device}")
+            return requested_device
 
         # Auto-detect best device
-        if torch.backends.mps.is_available():
-            device = torch.device("mps")
-            device_name = "Apple Silicon GPU (MPS)"
-        elif torch.cuda.is_available():
-            device = torch.device("cuda")
-            device_name = f"NVIDIA GPU (CUDA) - {torch.cuda.get_device_name(0)}"
-        else:
-            device = torch.device("cpu")
-            device_name = "CPU"
+        # Priority 1: Apple Silicon GPU (MPS) - for macOS with M1/M2/M3/M4
+        try:
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                device = torch.device("mps")
+                device_name = "Apple Silicon GPU (MPS)"
+                print(f"✓ Using device: {device_name}")
+                return device
+        except Exception as e:
+            print(f"⚠️  MPS detection error: {e}")
 
-        print(f"Using device: {device_name}")
+        # Priority 2: NVIDIA CUDA GPU - for Windows/Linux with NVIDIA GPUs
+        try:
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                device = torch.device("cuda")
+                device_name = f"NVIDIA GPU (CUDA) - {gpu_name}"
+                print(f"✓ Using device: {device_name}")
+                return device
+        except Exception as e:
+            print(f"⚠️  CUDA detection error: {e}")
+
+        # Priority 3: CPU fallback
+        device = torch.device("cpu")
+        device_name = "CPU (no GPU detected)"
+        print(f"✓ Using device: {device_name}")
+        print(f"⚠️  No GPU acceleration available. Processing will be slower.")
         return device
 
     def set_image(self, image):

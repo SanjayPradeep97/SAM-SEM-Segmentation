@@ -8,35 +8,64 @@ This toolkit provides both a **Python package** for programmatic access and a **
 
 ## 🚀 Quick Start
 
-### Option 1: Web Application (Recommended for most users)
+### 1. Setup Environment
 
 ```bash
-# Navigate to the app directory
-cd sem_analysis_app
+# Create conda environment
+conda create -n SEM_analysis python=3.11
+conda activate SEM_analysis
+
+# Install PyTorch (choose based on your system)
+# For RTX 5080 (Blackwell architecture):
+pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# For RTX 30/40 series:
+conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+
+# For Apple Silicon (M1/M2/M3/M4):
+conda install pytorch torchvision -c pytorch
+
+# For CPU only:
+conda install pytorch torchvision cpuonly -c pytorch
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Download SAM model
-curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+# Install the package (editable mode)
+cd sem_particle_analysis
+pip install -e .
+cd ..
+```
 
-# Launch the web interface
-python sem_analysis_app.py
+### 2. Download SAM Weights
+
+```bash
+# Download ViT-H (best quality, 2.4GB)
+python download_sam_weights.py
+
+# Weights will be saved to: sam_weights/
+```
+
+### 3. Run the Web Application
+
+**Windows:**
+```bash
+run_app.bat
+```
+
+**macOS/Linux:**
+```bash
+python sem_analysis_app/sem_analysis_app.py
 ```
 
 Open your browser to `http://127.0.0.1:7860`
 
-### Option 2: Python Package
+### 4. Use as Python Package
 
-```bash
-# Navigate to the package directory
-cd sem_particle_analysis
-
-# Install the package
-pip install -e .
-
-# Use in your Python code
+```python
 from sem_particle_analysis import SAMModel, ParticleAnalyzer
+
+# Your code here
 ```
 
 ---
@@ -105,20 +134,25 @@ See [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md) for API
 
 ## 💻 System Requirements
 
-- **Python**: 3.8 or higher
-- **GPU**: Optional but recommended (CUDA or Apple Silicon MPS)
+- **Python**: 3.11 or higher
+- **GPU**: Optional but recommended
+  - NVIDIA GPU with CUDA support (RTX 5080, 4090, 3090, etc.)
+  - Apple Silicon (M1/M2/M3/M4) with MPS support
+  - CPU fallback available (slower)
 - **RAM**: 8GB minimum, 16GB+ recommended
 - **Storage**: ~3GB for SAM model + your images
+
+### Performance Expectations
+- **RTX 5080 (CUDA)**: 1-3 seconds per image
+- **Apple Silicon (MPS)**: 2-5 seconds per image
+- **CPU**: 10-30 seconds per image
 
 ---
 
 ## 📚 Documentation
 
 - **Web App Guide**: [`sem_analysis_app/README.md`](sem_analysis_app/README.md)
-- **Quick Start**: [`sem_analysis_app/QUICKSTART.md`](sem_analysis_app/QUICKSTART.md)
-- **User Guide**: [`sem_analysis_app/USER_GUIDE.md`](sem_analysis_app/USER_GUIDE.md)
 - **Python API**: [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md)
-- **Installation**: [`sem_particle_analysis/INSTALL.md`](sem_particle_analysis/INSTALL.md)
 
 ---
 
