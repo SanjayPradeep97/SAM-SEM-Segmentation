@@ -319,7 +319,7 @@ def select_image_from_gallery(evt: gr.SelectData):
 # ============================================================================
 
 def detect_scale_auto(progress=gr.Progress()):
-    """Detect scale bar automatically and visualize detection."""
+    """Detect scale automatically - tries TIFF metadata first, then OCR."""
     try:
         if state.current_image is None:
             return "❌ No image loaded", "", None
@@ -327,24 +327,48 @@ def detect_scale_auto(progress=gr.Progress()):
         if state.scale_detector is None:
             return "❌ Scale detector not initialized", "", None
 
-        progress(0.3, desc="Detecting scale bar...")
-        state.scale_info = state.scale_detector.detect_scale_bar(state.current_image)
+        # Get current file path for metadata extraction
+        file_path = state.image_paths[state.current_index] if state.image_paths else None
+
+        progress(0.2, desc="Checking for TIFF metadata...")
+
+        # Use the unified detect_scale method that tries metadata first
+        try:
+            state.scale_info = state.scale_detector.detect_scale(
+                state.current_image,
+                file_path=file_path,
+                method='auto'
+            )
+        except ValueError as e:
+            return f"❌ Scale detection failed: {str(e)}", "", None
 
         progress(0.7, desc="Cropping scale bar and creating visualization...")
         state.cropped_image = state.scale_detector.crop_scale_bar(state.current_image)
 
-        # Create visualization with scale bar line and crop box
+        # Create visualization
         from visualization import visualize_scale_detection
         scale_viz = visualize_scale_detection(state.current_image, state.scale_info)
 
         progress(1.0, desc="Complete!")
 
-        scale_nm = state.scale_info['scale_nm']
+        # Format status message based on detection method
+        method_used = state.scale_info.get('method', 'unknown')
         conversion = state.scale_info['conversion']
+        scale_nm = state.scale_info.get('scale_nm') or state.scale_info.get('pixel_size_nm', 0)
+
+        if method_used == 'metadata':
+            manufacturer = state.scale_info.get('manufacturer', 'unknown')
+            confidence = state.scale_info.get('confidence', 'unknown')
+            if manufacturer != 'unknown':
+                status = f"✅ From TIFF metadata ({manufacturer}): {conversion:.4f} nm/pixel [{confidence} confidence]"
+            else:
+                status = f"✅ From TIFF metadata: {conversion:.4f} nm/pixel [{confidence} confidence]"
+        else:
+            status = f"✅ From OCR: {scale_nm:.0f} nm scale bar ({conversion:.4f} nm/pixel)"
 
         return (
-            f"✅ Detected: {scale_nm:.0f} nm ({conversion:.3f} nm/pixel)",
-            f"{scale_nm:.0f}",
+            status,
+            f"{scale_nm:.0f}" if scale_nm else f"{conversion:.4f}",
             scale_viz
         )
 

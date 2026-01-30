@@ -34,6 +34,12 @@ analysis_results*.csv
 .analysis_state.json
 anaconda_projects/
 
+# Test data folders (large image datasets)
+Extrusion data for plastic blocks dinning hall plastics/
+
+# Test scripts
+test_scale_extraction.py
+
 # Gradio cache
 gradio_cached_examples/
 flagged/

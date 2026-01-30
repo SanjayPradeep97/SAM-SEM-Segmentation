@@ -4,10 +4,17 @@ Utility Functions
 Common helper functions for image processing and visualization.
 """
 
+import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage import measure
+
+try:
+    import tifffile
+    TIFFFILE_AVAILABLE = True
+except ImportError:
+    TIFFFILE_AVAILABLE = False
 
 
 def load_image(file_path):
@@ -29,6 +36,109 @@ def load_image(file_path):
         raise ValueError(f"Could not load image: {file_path}")
 
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
+def extract_tiff_metadata(file_path):
+    """
+    Extract metadata from a TIFF file for scale detection.
+
+    Extracts key metadata fields that may contain pixel size or resolution
+    information from SEM/TEM microscope images.
+
+    Args:
+        file_path (str): Path to TIFF file
+
+    Returns:
+        dict: Metadata dictionary containing:
+            - 'image_description': Raw ImageDescription tag (str or None)
+            - 'x_resolution': X resolution value (float or None)
+            - 'y_resolution': Y resolution value (float or None)
+            - 'resolution_unit': Unit code (1=none, 2=inch, 3=cm) or None
+            - 'software': Software tag if present
+            - 'raw_tags': Dict of all available TIFF tags
+            - 'is_tiff': Boolean indicating successful TIFF read
+
+    Raises:
+        ValueError: If file is not a valid TIFF or tifffile not available
+    """
+    if not TIFFFILE_AVAILABLE:
+        raise ValueError("tifffile library not available. Install with: pip install tifffile")
+
+    # Check file extension
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.tif', '.tiff'):
+        raise ValueError(f"Not a TIFF file: {file_path}")
+
+    metadata = {
+        'image_description': None,
+        'x_resolution': None,
+        'y_resolution': None,
+        'resolution_unit': None,
+        'software': None,
+        'raw_tags': {},
+        'is_tiff': False
+    }
+
+    try:
+        with tifffile.TiffFile(file_path) as tif:
+            metadata['is_tiff'] = True
+
+            # Get the first page's tags
+            if tif.pages:
+                page = tif.pages[0]
+                tags = page.tags
+
+                # Extract common tags
+                # Tag 270: ImageDescription
+                if 'ImageDescription' in tags:
+                    desc = tags['ImageDescription'].value
+                    if isinstance(desc, bytes):
+                        desc = desc.decode('utf-8', errors='ignore')
+                    metadata['image_description'] = desc
+
+                # Tag 282: XResolution
+                if 'XResolution' in tags:
+                    val = tags['XResolution'].value
+                    # Handle rational (tuple) or float
+                    if isinstance(val, tuple):
+                        metadata['x_resolution'] = val[0] / val[1] if val[1] != 0 else None
+                    else:
+                        metadata['x_resolution'] = float(val)
+
+                # Tag 283: YResolution
+                if 'YResolution' in tags:
+                    val = tags['YResolution'].value
+                    if isinstance(val, tuple):
+                        metadata['y_resolution'] = val[0] / val[1] if val[1] != 0 else None
+                    else:
+                        metadata['y_resolution'] = float(val)
+
+                # Tag 296: ResolutionUnit (1=none, 2=inch, 3=centimeter)
+                if 'ResolutionUnit' in tags:
+                    metadata['resolution_unit'] = tags['ResolutionUnit'].value
+
+                # Tag 305: Software
+                if 'Software' in tags:
+                    software = tags['Software'].value
+                    if isinstance(software, bytes):
+                        software = software.decode('utf-8', errors='ignore')
+                    metadata['software'] = software
+
+                # Store all tags for debugging/advanced parsing
+                for tag_name, tag in tags.items():
+                    try:
+                        val = tag.value
+                        if isinstance(val, bytes):
+                            val = val.decode('utf-8', errors='ignore')
+                        metadata['raw_tags'][tag_name] = val
+                    except Exception:
+                        # Skip tags that can't be easily converted
+                        pass
+
+    except Exception as e:
+        raise ValueError(f"Failed to read TIFF metadata: {e}")
+
+    return metadata
 
 
 def save_image(image, file_path):
