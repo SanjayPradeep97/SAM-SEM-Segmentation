@@ -124,13 +124,24 @@ def extract_tiff_metadata(file_path):
                         software = software.decode('utf-8', errors='ignore')
                     metadata['software'] = software
 
+                # Extract image dimensions
+                if 'ImageWidth' in tags:
+                    metadata['image_width'] = tags['ImageWidth'].value
+                if 'ImageLength' in tags:
+                    metadata['image_height'] = tags['ImageLength'].value
+
                 # Store all tags for debugging/advanced parsing
+                # Index by BOTH string name and numeric code for flexible lookup
                 for tag_name, tag in tags.items():
                     try:
                         val = tag.value
                         if isinstance(val, bytes):
                             val = val.decode('utf-8', errors='ignore')
+                        # Store by string name (existing behavior)
                         metadata['raw_tags'][tag_name] = val
+                        # Also store by numeric code for manufacturer parsers
+                        if hasattr(tag, 'code'):
+                            metadata['raw_tags'][tag.code] = val
                     except Exception:
                         # Skip tags that can't be easily converted
                         pass

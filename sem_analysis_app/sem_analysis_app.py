@@ -30,6 +30,10 @@ from visualization import (
     create_particle_visualization,
     create_point_refine_visualization,
     visualize_three_masks,
+    visualize_scale_verification,
+    draw_zoom_inset,
+    draw_manual_scale_overlay,
+    draw_ocr_box_overlay,
     create_results_dataframe,
     create_summary_statistics_table
 )
@@ -48,6 +52,7 @@ class AppState:
         self.scale_detector = None
         self.segmenter = None
         self.results_manager = None
+        self.resumed_csv_path = None  # Path to resumed CSV, if any
 
         # Image management
         self.image_paths = []
@@ -65,6 +70,11 @@ class AppState:
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
         self.show_particle_numbers = True  # Whether to show particle numbers in visualization
         self.crop_percent = 7.0  # Percentage to crop from bottom (for scale bar removal)
+
+        # Scale detection mode state
+        self.scale_mode = "Metadata"       # "Metadata", "OCR", or "Manual"
+        self.ocr_click_points = []         # [(x1,y1), (x2,y2)] for OCR box corners
+        self.manual_click_points = []      # [(x1,y1), (x2,y2)] for manual endpoints
 
         # Refinement state
         self.click_mode = "delete"  # "delete", "add", "merge", "point_refine"
@@ -88,6 +98,8 @@ class AppState:
         self.current_image = None
         self.cropped_image = None
         self.scale_info = None
+        self.ocr_click_points = []
+        self.manual_click_points = []
         self.masks = None
         self.scores = None
         self.selected_mask_index = None
@@ -178,6 +190,40 @@ class AppState:
                 else:
                     # No results manager yet, clear processed images
                     self.processed_images = {}
+
+    def sync_processed_from_csv(self):
+        """Cross-reference loaded images with results CSV to set checkmarks.
+
+        Returns:
+            tuple: (matched_count, unmatched_count)
+                matched_count: images in both CSV and loaded images
+                unmatched_count: CSV entries with no matching loaded image
+        """
+        if self.results_manager is None or not self.image_paths:
+            return 0, 0
+
+        results_df = self.results_manager.get_results()
+        if len(results_df) == 0:
+            return 0, 0
+
+        # Build lookup: filename -> num_particles
+        csv_filenames = {}
+        for _, row in results_df.iterrows():
+            csv_filenames[row['file_name']] = int(row['num_particles'])
+
+        # Match loaded images against CSV
+        matched = 0
+        for idx, img_path in enumerate(self.image_paths):
+            basename = os.path.basename(img_path)
+            if basename in csv_filenames:
+                self.mark_processed(idx, csv_filenames[basename])
+                matched += 1
+
+        # Count CSV entries with no matching uploaded image
+        image_basenames = {os.path.basename(p) for p in self.image_paths}
+        unmatched = sum(1 for fn in csv_filenames if fn not in image_basenames)
+
+        return matched, unmatched
 
 
 # Global state instance
@@ -279,19 +325,32 @@ def load_images_from_folder(file_input, progress=gr.Progress()):
         state.current_index = 0
         state.processed_images = {}
 
-        # Initialize results manager
-        csv_path = os.path.join(folder_for_csv, "analysis_results.csv")
-        state.results_manager = ResultsManager(csv_file=csv_path)
+        # Initialize results manager — reuse resumed CSV if available
+        if state.resumed_csv_path is not None and state.results_manager is not None:
+            # User already resumed a session CSV, keep using it
+            pass
+        else:
+            csv_path = os.path.join(folder_for_csv, "analysis_results.csv")
+            state.results_manager = ResultsManager(csv_file=csv_path)
 
         # Load saved state if exists
         state.load_state()
+
+        # Cross-reference images with results CSV to set checkmarks
+        matched, unmatched = state.sync_processed_from_csv()
 
         progress(0.7, desc="Creating gallery...")
         gallery_data = create_image_gallery()
 
         progress(1.0, desc="Complete!")
 
-        status = f"✅ Loaded {len(state.image_paths)} images from {source}. Ready to process!"
+        status_parts = [f"✅ Loaded {len(state.image_paths)} images from {source}. Ready to process!"]
+        if matched > 0:
+            status_parts.append(f"{matched} already analyzed (from CSV)")
+        if unmatched > 0:
+            status_parts.append(f"⚠️ {unmatched} CSV entries have no matching image")
+
+        status = " | ".join(status_parts)
 
         return status, gallery_data
 
@@ -299,6 +358,61 @@ def load_images_from_folder(file_input, progress=gr.Progress()):
         import traceback
         traceback.print_exc()
         return f"❌ Error: {str(e)}", None
+
+
+def resume_session(csv_file):
+    """Resume a previous analysis session from a CSV results file.
+
+    Loads the CSV as the active results file and cross-references filenames
+    with uploaded images to mark already-analyzed images with checkmarks.
+    """
+    try:
+        if csv_file is None:
+            return "❌ No CSV file selected", None, ""
+
+        # Handle Gradio File object or string path
+        if hasattr(csv_file, 'name'):
+            csv_path = os.path.abspath(csv_file.name)
+        else:
+            csv_path = os.path.abspath(str(csv_file))
+
+        if not os.path.exists(csv_path):
+            return "❌ CSV file not found", None, ""
+
+        # Load the CSV via ResultsManager
+        state.results_manager = ResultsManager(csv_file=csv_path, auto_create=False)
+        state.resumed_csv_path = csv_path
+
+        results_df = state.results_manager.get_results()
+        csv_count = len(results_df)
+
+        if csv_count == 0:
+            return "⚠️ CSV loaded but contains no results", None, ""
+
+        # If images are already loaded, cross-reference
+        if state.image_paths:
+            matched, unmatched = state.sync_processed_from_csv()
+            state.save_state()
+
+            # Regenerate gallery with updated checkmarks
+            gallery_data = create_image_gallery()
+
+            # Build status
+            status_parts = [f"✅ Resumed: {csv_count} results in CSV, {matched} matched to loaded images"]
+            if unmatched > 0:
+                status_parts.append(f"⚠️ {unmatched} images in results CSV don't have a matching image")
+
+            load_info = f"✅ {len(state.image_paths)} images loaded, {matched} already analyzed"
+
+            return "\n".join(status_parts), gallery_data, load_info
+        else:
+            # No images loaded yet — just store the CSV for when images are loaded
+            return f"✅ CSV loaded with {csv_count} results. Now load your images to see checkmarks.", None, ""
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"❌ Error: {str(e)}", None, ""
 
 
 # ============================================================================
@@ -371,8 +485,8 @@ def select_image_from_gallery(evt: gr.SelectData):
 # Tab 3: Processing - Scale Detection and Segmentation
 # ============================================================================
 
-def detect_scale_auto(progress=gr.Progress()):
-    """Detect scale automatically - tries TIFF metadata first, then OCR."""
+def detect_scale_metadata(progress=gr.Progress()):
+    """Detect scale from TIFF metadata (Metadata mode)."""
     try:
         if state.current_image is None:
             return "❌ No image loaded", None
@@ -380,84 +494,296 @@ def detect_scale_auto(progress=gr.Progress()):
         if state.scale_detector is None:
             return "❌ Scale detector not initialized", None
 
-        # Get current file path for metadata extraction
         file_path = state.image_paths[state.current_index] if state.image_paths else None
 
-        progress(0.2, desc="Checking for TIFF metadata...")
+        progress(0.2, desc="Reading TIFF metadata...")
 
-        # Use the unified detect_scale method that tries metadata first
         try:
             state.scale_info = state.scale_detector.detect_scale(
                 state.current_image,
                 file_path=file_path,
-                method='auto'
+                method='metadata'
             )
         except ValueError as e:
-            return f"❌ Scale detection failed: {str(e)}", None
+            return f"❌ Metadata scale detection failed: {str(e)}", None
 
-        progress(0.7, desc="Cropping scale bar and creating visualization...")
-        state.cropped_image = state.scale_detector.crop_scale_bar(
+        progress(0.5, desc="Detecting databar...")
+
+        databar_info = state.scale_detector.detect_databar(
             state.current_image,
-            crop_percent=state.crop_percent
+            state.scale_info.get('raw_metadata')
         )
 
-        # Create visualization only if OCR was used (metadata detection doesn't have region info)
-        method_used = state.scale_info.get('method', 'unknown')
-
-        if method_used == 'ocr' and 'region' in state.scale_info:
-            from visualization import visualize_scale_detection
-            scale_viz = visualize_scale_detection(state.current_image, state.scale_info)
+        # Crop if databar found
+        if databar_info.get('has_databar'):
+            crop_pct = databar_info['databar_fraction'] * 100
+            state.cropped_image = state.scale_detector.crop_scale_bar(
+                state.current_image, crop_percent=crop_pct
+            )
         else:
-            # For metadata detection, just show the cropped image
-            scale_viz = state.cropped_image
+            state.cropped_image = state.current_image.copy()
+
+        progress(0.8, desc="Creating verification visualization...")
+
+        scale_viz = visualize_scale_verification(
+            state.current_image, state.scale_info, databar_info
+        )
 
         progress(1.0, desc="Complete!")
 
-        # Format status message based on detection method
+        # Build status
         conversion = state.scale_info['conversion']
-        scale_nm = state.scale_info.get('scale_nm') or state.scale_info.get('pixel_size_nm', 0)
+        manufacturer = state.scale_info.get('manufacturer', 'unknown')
+        confidence = state.scale_info.get('confidence', 'unknown')
+        metadata_source = state.scale_info.get('metadata_source', 'TIFF metadata')
 
-        if method_used == 'metadata':
-            manufacturer = state.scale_info.get('manufacturer', 'unknown')
-            confidence = state.scale_info.get('confidence', 'unknown')
-            metadata_source = state.scale_info.get('metadata_source', 'TIFF metadata')
-            if manufacturer != 'unknown':
-                status = f"✅ From {metadata_source} ({manufacturer}): {conversion:.4f} nm/pixel [{confidence} confidence]"
-            else:
-                status = f"✅ From {metadata_source}: {conversion:.4f} nm/pixel [{confidence} confidence]"
+        status_parts = []
+        if manufacturer != 'unknown':
+            status_parts.append(f"✅ {manufacturer.upper()} metadata: {conversion:.4f} nm/pixel [{confidence} confidence]")
         else:
-            status = f"✅ From OCR: {scale_nm:.0f} nm scale bar ({conversion:.4f} nm/pixel)"
+            status_parts.append(f"✅ {metadata_source}: {conversion:.4f} nm/pixel [{confidence} confidence]")
 
-        return (
-            status,
-            scale_viz
-        )
+        if databar_info.get('has_databar'):
+            status_parts.append(f"Databar: {databar_info['databar_height']}px cropped")
+        else:
+            status_parts.append("No databar detected — full image preserved")
+
+        return " | ".join(status_parts), scale_viz
 
     except Exception as e:
         return f"❌ Error: {str(e)}", None
 
 
-def set_manual_scale(scale_nm_text):
-    """Set scale manually."""
+def detect_scale_ocr_in_box():
+    """Run OCR scale detection inside the user-defined box (OCR mode)."""
     try:
         if state.current_image is None:
-            return "❌ No image loaded", None
+            return "❌ No image loaded", None, ""
 
-        scale_nm = float(scale_nm_text)
-        if scale_nm <= 0:
-            return "❌ Scale must be positive", None
+        if state.scale_detector is None:
+            return "❌ Scale detector not initialized", None, ""
 
-        pixel_length = 100
-        conversion = state.scale_detector.set_manual_scale(scale_nm, pixel_length)
-        state.scale_info = state.scale_detector.last_detection
-        state.cropped_image = state.scale_detector.crop_scale_bar(state.current_image)
+        if len(state.ocr_click_points) < 2:
+            return "❌ Click two corners on the image first", None, ""
 
-        return f"✅ Manual scale set: {scale_nm:.0f} nm ({conversion:.3f} nm/pixel)", state.cropped_image
+        (x1, y1), (x2, y2) = state.ocr_click_points
+        bx0, by0 = min(int(x1), int(x2)), min(int(y1), int(y2))
+        bx1, by1 = max(int(x1), int(x2)), max(int(y1), int(y2))
 
-    except ValueError:
-        return "❌ Invalid scale value", None
+        H, W = state.current_image.shape[:2]
+        bx0, by0 = max(0, bx0), max(0, by0)
+        bx1, by1 = min(W, bx1), min(H, by1)
+
+        if bx1 - bx0 < 10 or by1 - by0 < 10:
+            return "❌ Box too small — click two wider-spaced corners", None, ""
+
+        # Convert box to fractional region parameters for detect_scale_bar
+        cx = (bx0 + bx1) / 2 / W
+        cy = (by0 + by1) / 2 / H
+        rw = (bx1 - bx0) / W
+        rh = (by1 - by0) / H
+
+        try:
+            result = state.scale_detector.detect_scale_bar(
+                state.current_image,
+                region_x=cx, region_y=cy,
+                region_width=rw, region_height=rh,
+                polarity='auto', threshold=200
+            )
+        except ValueError as e:
+            # Still show the box
+            viz = draw_ocr_box_overlay(state.current_image, state.ocr_click_points)
+            return f"❌ OCR failed: {str(e)}", viz, f"OCR failed: {e}"
+
+        state.scale_info = result
+
+        # Detect databar for cropping
+        databar_info = state.scale_detector.detect_databar(state.current_image)
+        if databar_info.get('has_databar'):
+            crop_pct = databar_info['databar_fraction'] * 100
+            state.cropped_image = state.scale_detector.crop_scale_bar(
+                state.current_image, crop_percent=crop_pct
+            )
+        else:
+            state.cropped_image = state.current_image.copy()
+
+        # Draw overlay with OCR results
+        ocr_result_for_viz = {
+            'line_coords': result.get('line_coords'),
+            'ocr_text': result.get('ocr_text', ''),
+        }
+        viz = draw_ocr_box_overlay(state.current_image, state.ocr_click_points, ocr_result_for_viz)
+
+        conversion = result['conversion']
+        ocr_text = result.get('ocr_text', '')
+        pixel_length = result.get('pixel_length', 0)
+        info_text = f"Bar: {pixel_length} px | OCR: \"{ocr_text}\" | {conversion:.4f} nm/px"
+
+        return f"✅ OCR: {conversion:.4f} nm/pixel", viz, info_text
+
     except Exception as e:
-        return f"❌ Error: {str(e)}", None
+        return f"❌ Error: {str(e)}", None, ""
+
+
+def apply_manual_scale(um_value):
+    """Apply manual scale from clicked endpoints + user-entered µm value (Manual mode)."""
+    try:
+        if state.current_image is None:
+            return "❌ No image loaded", None, ""
+
+        if state.scale_detector is None:
+            return "❌ Scale detector not initialized", None, ""
+
+        if len(state.manual_click_points) < 2:
+            return "❌ Click two endpoints on the image first", None, ""
+
+        if um_value is None or um_value <= 0:
+            return "❌ Enter a positive scale bar length in µm", None, ""
+
+        x1 = int(state.manual_click_points[0][0])
+        x2 = int(state.manual_click_points[1][0])
+        pixel_length = abs(x2 - x1)
+
+        if pixel_length < 2:
+            return "❌ Endpoints too close together", None, ""
+
+        nm_value = float(um_value) * 1000  # µm → nm
+        conversion = nm_value / pixel_length
+
+        # Set scale via the detector
+        state.scale_detector.set_manual_scale(conversion, 1)
+        state.scale_info = state.scale_detector.last_detection
+
+        # Detect databar for cropping
+        databar_info = state.scale_detector.detect_databar(state.current_image)
+        if databar_info.get('has_databar'):
+            crop_pct = databar_info['databar_fraction'] * 100
+            state.cropped_image = state.scale_detector.crop_scale_bar(
+                state.current_image, crop_percent=crop_pct
+            )
+        else:
+            state.cropped_image = state.current_image.copy()
+
+        # Show overlay
+        viz = draw_manual_scale_overlay(state.current_image, state.manual_click_points, pixel_length)
+
+        info = f"Bar: {pixel_length} px = {um_value:.2f} µm → {conversion:.4f} nm/px"
+        return f"✅ Manual: {conversion:.4f} nm/pixel ({pixel_length} px = {um_value} µm)", viz, info
+
+    except Exception as e:
+        return f"❌ Error: {str(e)}", None, ""
+
+
+def handle_scale_click(evt: gr.SelectData):
+    """Handle clicks on the image for OCR and Manual scale detection modes.
+
+    Returns: (image, scale_status, ocr_info, manual_info)
+    """
+    try:
+        if state.current_image is None:
+            return None, "", "", ""
+
+        x, y = evt.index[0], evt.index[1]
+
+        if state.scale_mode == "Metadata":
+            # No click interaction in Metadata mode
+            return state.current_image, "", "", ""
+
+        elif state.scale_mode == "OCR":
+            if len(state.ocr_click_points) >= 2:
+                # Already have 2 points — reset for new box
+                state.ocr_click_points = []
+
+            state.ocr_click_points.append((x, y))
+
+            if len(state.ocr_click_points) == 1:
+                # First corner — draw marker
+                viz = draw_ocr_box_overlay(state.current_image, state.ocr_click_points)
+                return viz, "", f"Corner 1 at ({x}, {y}). Click corner 2...", ""
+
+            else:
+                # Second corner — draw box and auto-run OCR
+                status, viz, info = detect_scale_ocr_in_box()
+                return viz, status, info, ""
+
+        elif state.scale_mode == "Manual":
+            if len(state.manual_click_points) >= 2:
+                # Already have 2 points — reset for new measurement
+                state.manual_click_points = []
+
+            state.manual_click_points.append((x, y))
+
+            if len(state.manual_click_points) == 1:
+                # First endpoint — draw marker with zoom inset
+                viz = draw_manual_scale_overlay(state.current_image, state.manual_click_points)
+                return viz, "", "", f"Left endpoint at ({x}, {y}). Click the right end..."
+
+            else:
+                # Second endpoint — horizontal lock, draw line
+                x1, y1 = state.manual_click_points[0]
+                # Lock y to first point's y (horizontal constraint)
+                state.manual_click_points[1] = (x, y1)
+                viz = draw_manual_scale_overlay(state.current_image, state.manual_click_points)
+                px_len = abs(int(x) - int(x1))
+                return viz, "", "", f"Bar: {px_len} px. Enter length in µm and click Apply."
+
+        return state.current_image, "", "", ""
+
+    except Exception as e:
+        return state.current_image, f"❌ Error: {str(e)}", "", ""
+
+
+def set_scale_mode(mode):
+    """Handle scale detection mode change."""
+    state.scale_mode = mode
+    state.ocr_click_points = []
+    state.manual_click_points = []
+
+    show_ocr = (mode == "OCR")
+    show_manual = (mode == "Manual")
+
+    # Restore original image display when switching modes
+    img = state.current_image
+
+    info_msg = ""
+    if mode == "OCR":
+        info_msg = "Click point 1 of 2..."
+    elif mode == "Manual":
+        info_msg = "Click point 1 of 2..."
+
+    return (
+        gr.update(visible=show_ocr),    # ocr_controls group
+        gr.update(visible=show_manual),  # manual_controls group
+        "Ready",                         # scale_status
+        img,                             # current_image
+        info_msg,                        # ocr_info
+        info_msg,                        # manual_info
+    )
+
+
+def reset_scale_clicks():
+    """Reset click points for current scale detection mode."""
+    if state.scale_mode == "OCR":
+        state.ocr_click_points = []
+    elif state.scale_mode == "Manual":
+        state.manual_click_points = []
+
+    img = state.current_image
+    return img, "Reset — click on the image to start."
+
+
+def detect_scale_clicked(progress=gr.Progress()):
+    """Handle the Detect Scale button click based on current mode."""
+    if state.scale_mode == "Metadata":
+        return detect_scale_metadata(progress)
+    elif state.scale_mode == "OCR":
+        if len(state.ocr_click_points) == 2:
+            status, viz, info = detect_scale_ocr_in_box()
+            return status, viz
+        return "❌ Click two corners on the image first", state.current_image
+    elif state.scale_mode == "Manual":
+        return "Use the image clicks and µm input below", state.current_image
+    return "❌ Unknown mode", None
 
 
 def segment_with_sam(progress=gr.Progress()):
@@ -752,12 +1078,6 @@ def set_min_particle_size(size):
     return f"✓ Minimum particle size set to {int(size)} pixels"
 
 
-def set_crop_percent(percent):
-    """Set crop percentage for scale bar removal."""
-    state.crop_percent = float(percent)
-    return f"✓ Bottom crop set to {percent:.1f}%"
-
-
 def toggle_particle_numbers(show_numbers):
     """Toggle visibility of particle numbers in visualization."""
     state.show_particle_numbers = show_numbers
@@ -1036,6 +1356,53 @@ def clear_edge_particles(buffer_size):
             results_df,
             stats_df
         )
+
+    except Exception as e:
+        return None, None, f"❌ Error: {str(e)}", None, None
+
+
+def clear_all_particles():
+    """Clear ALL particles from the mask, giving user a blank canvas to add particles manually."""
+    try:
+        if state.analyzer is None:
+            return None, None, "❌ No analysis available", None, None
+
+        # Get all current labels and delete them all
+        all_labels = [r.label for r in state.analyzer.regions]
+        n_removed = len(all_labels)
+
+        if n_removed > 0:
+            state.analyzer.delete_particles(all_labels)
+
+        # Clear all pending state too
+        state.pending_deletes = []
+        state.pending_add_points = []
+        state.pending_add_masks = []
+        state.pending_merge = []
+        state.point_refine_particle = None
+        state.point_refine_base_mask = None
+        state.point_refine_points = []
+        state.point_refine_labels = []
+        state.point_refine_preview_mask = None
+        state.point_refine_logits = None
+        state.undo_history = []
+
+        # Redraw (empty image, no particles)
+        particle_viz = create_particle_visualization(
+            state.cropped_image,
+            state.analyzer.labeled_mask,
+            state.analyzer.regions,
+            show_labels=state.show_particle_numbers
+        )
+
+        # Empty measurements
+        measurements = state.analyzer.get_measurements(in_nm=True)
+        results_df = create_results_dataframe(measurements)
+        stats_df = create_summary_statistics_table(measurements)
+
+        status = f"🗑️ Cleared all {n_removed} particles. Use 'add' mode to start segmenting."
+
+        return particle_viz, results_df, status, results_df, stats_df
 
     except Exception as e:
         return None, None, f"❌ Error: {str(e)}", None, None
@@ -1354,6 +1721,18 @@ def create_interface():
                         load_btn = gr.Button("📁 Load Images", variant="primary", size="lg", interactive=False)
                         load_status = gr.Textbox(label="Status", interactive=False)
 
+                        gr.Markdown("---")
+                        gr.Markdown("**Resume Previous Session**")
+                        gr.Markdown("Upload a previous results CSV to continue adding to it.")
+                        resume_csv_input = gr.File(
+                            label="Select Results CSV",
+                            file_count="single",
+                            file_types=[".csv"],
+                            type="filepath"
+                        )
+                        resume_btn = gr.Button("📂 Resume Session", variant="secondary")
+                        resume_status = gr.Textbox(label="Resume Status", interactive=False)
+
             # ================================================================
             # TAB 2: Image Gallery
             # ================================================================
@@ -1388,16 +1767,42 @@ def create_interface():
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### Step 1: Scale Detection")
-                        crop_percent_slider = gr.Slider(
-                            minimum=0,
-                            maximum=20,
-                            value=7.0,
-                            step=0.5,
-                            label="Bottom Crop Percentage (%)",
-                            info="Percentage of image bottom to crop (removes scale bar region)"
+                        scale_mode_dropdown = gr.Dropdown(
+                            choices=["Metadata", "OCR", "Manual"],
+                            value="Metadata",
+                            label="Detection Mode",
+                            info="Metadata: TIFF tags | OCR: click box on image | Manual: click endpoints"
                         )
-                        detect_btn = gr.Button("🔍 Auto-Detect Scale", variant="primary")
+                        detect_btn = gr.Button("🔍 Detect Scale", variant="primary")
                         scale_status = gr.Textbox(label="Status", interactive=False)
+
+                        # OCR mode controls (hidden by default)
+                        with gr.Group(visible=False) as ocr_controls:
+                            gr.Markdown("**OCR Mode:** Click two opposite corners on the image to define the search box.")
+                            ocr_info = gr.Textbox(
+                                label="OCR Info",
+                                value="Click point 1 of 2...",
+                                interactive=False
+                            )
+                            ocr_reset_btn = gr.Button("Reset OCR Box", size="sm")
+
+                        # Manual mode controls (hidden by default)
+                        with gr.Group(visible=False) as manual_controls:
+                            gr.Markdown("**Manual Mode:** Click the left end of the scale bar, then the right end.")
+                            manual_info = gr.Textbox(
+                                label="Manual Info",
+                                value="Click point 1 of 2...",
+                                interactive=False
+                            )
+                            manual_um_input = gr.Number(
+                                label="Scale bar length (µm)",
+                                info="Enter the physical length of the scale bar in micrometers",
+                                precision=3,
+                                minimum=0.001,
+                                maximum=100000
+                            )
+                            manual_apply_btn = gr.Button("Apply Manual Scale", variant="primary")
+                            manual_reset_btn = gr.Button("Reset Points", size="sm")
 
                     with gr.Column():
                         gr.Markdown("### Step 2: Segmentation")
@@ -1493,7 +1898,9 @@ def create_interface():
                         step=1,
                         label="Edge Buffer (pixels)"
                     )
-                    clear_edges_btn = gr.Button("🧹 Clear Edge Particles", variant="secondary")
+                    with gr.Column():
+                        clear_edges_btn = gr.Button("🧹 Clear Edge Particles", variant="secondary")
+                        clear_all_btn = gr.Button("🗑️ Clear All Particles", variant="stop")
 
                 refine_status = gr.Textbox(label="Status", interactive=False)
 
@@ -1588,22 +1995,52 @@ def create_interface():
             outputs=[load_status, gallery]
         )
 
+        resume_btn.click(
+            resume_session,
+            inputs=[resume_csv_input],
+            outputs=[resume_status, gallery, load_status]
+        )
+
         # Gallery tab
         gallery.select(
             select_image_from_gallery,
             outputs=[current_image, selected_image_info, tabs, click_mode_radio]
         )
 
-        # Processing tab
-        crop_percent_slider.change(
-            set_crop_percent,
-            inputs=[crop_percent_slider],
-            outputs=[scale_status]
+        # Processing tab — scale detection mode
+        scale_mode_dropdown.change(
+            set_scale_mode,
+            inputs=[scale_mode_dropdown],
+            outputs=[ocr_controls, manual_controls, scale_status, current_image, ocr_info, manual_info]
+        )
+
+        # Click handler on processing image for OCR / Manual modes
+        current_image.select(
+            handle_scale_click,
+            outputs=[current_image, scale_status, ocr_info, manual_info]
         )
 
         detect_btn.click(
-            detect_scale_auto,
+            detect_scale_clicked,
             outputs=[scale_status, current_image]
+        )
+
+        # OCR mode reset
+        ocr_reset_btn.click(
+            reset_scale_clicks,
+            outputs=[current_image, ocr_info]
+        )
+
+        # Manual mode controls
+        manual_apply_btn.click(
+            apply_manual_scale,
+            inputs=[manual_um_input],
+            outputs=[scale_status, current_image, manual_info]
+        )
+
+        manual_reset_btn.click(
+            reset_scale_clicks,
+            outputs=[current_image, manual_info]
         )
 
         min_particle_size_slider.change(
@@ -1670,6 +2107,11 @@ def create_interface():
         clear_edges_btn.click(
             clear_edge_particles,
             inputs=[edge_buffer],
+            outputs=[refine_viz, refine_results, refine_status, current_results, current_stats]
+        )
+
+        clear_all_btn.click(
+            clear_all_particles,
             outputs=[refine_viz, refine_results, refine_status, current_results, current_stats]
         )
 
