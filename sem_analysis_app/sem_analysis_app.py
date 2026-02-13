@@ -486,15 +486,22 @@ def select_image_from_gallery(evt: gr.SelectData):
 # ============================================================================
 
 def detect_scale_metadata(progress=gr.Progress()):
-    """Detect scale from TIFF metadata (Metadata mode)."""
+    """Detect scale from TIFF metadata (Metadata mode).
+
+    Returns: (status, image_viz, crop_slider_value)
+    """
     try:
         if state.current_image is None:
-            return "❌ No image loaded", None
+            return "❌ No image loaded", None, gr.update()
 
         if state.scale_detector is None:
-            return "❌ Scale detector not initialized", None
+            return "❌ Scale detector not initialized", None, gr.update()
 
         file_path = state.image_paths[state.current_index] if state.image_paths else None
+
+        # Check if this is the first detection for this image
+        # (before overwriting scale_info with new results)
+        first_detection = (state.scale_info is None)
 
         progress(0.2, desc="Reading TIFF metadata...")
 
@@ -505,7 +512,7 @@ def detect_scale_metadata(progress=gr.Progress()):
                 method='metadata'
             )
         except ValueError as e:
-            return f"❌ Metadata scale detection failed: {str(e)}", None
+            return f"❌ Metadata scale detection failed: {str(e)}", None, gr.update()
 
         progress(0.5, desc="Detecting databar...")
 
@@ -514,9 +521,22 @@ def detect_scale_metadata(progress=gr.Progress()):
             state.scale_info.get('raw_metadata')
         )
 
-        # Crop if databar found
         if databar_info.get('has_databar'):
-            crop_pct = databar_info['databar_fraction'] * 100
+            auto_crop_pct = round(databar_info['databar_fraction'] * 100, 1)
+        else:
+            auto_crop_pct = 0.0
+
+        # On first detection, set the slider to the auto-detected value.
+        # On subsequent detections, keep the user's slider value.
+        if first_detection:
+            state.crop_percent = auto_crop_pct
+            slider_update = auto_crop_pct
+        else:
+            slider_update = gr.update()  # Don't touch the slider
+
+        # Apply crop using current state value
+        crop_pct = state.crop_percent
+        if crop_pct > 0:
             state.cropped_image = state.scale_detector.crop_scale_bar(
                 state.current_image, crop_percent=crop_pct
             )
@@ -543,15 +563,15 @@ def detect_scale_metadata(progress=gr.Progress()):
         else:
             status_parts.append(f"✅ {metadata_source}: {conversion:.4f} nm/pixel [{confidence} confidence]")
 
-        if databar_info.get('has_databar'):
-            status_parts.append(f"Databar: {databar_info['databar_height']}px cropped")
+        if auto_crop_pct > 0:
+            status_parts.append(f"Databar detected ({auto_crop_pct:.1f}%)")
         else:
-            status_parts.append("No databar detected — full image preserved")
+            status_parts.append("No databar detected — adjust crop slider if needed")
 
-        return " | ".join(status_parts), scale_viz
+        return " | ".join(status_parts), scale_viz, slider_update
 
     except Exception as e:
-        return f"❌ Error: {str(e)}", None
+        return f"❌ Error: {str(e)}", None, gr.update()
 
 
 def detect_scale_ocr_in_box():
@@ -772,18 +792,59 @@ def reset_scale_clicks():
     return img, "Reset — click on the image to start."
 
 
+def adjust_crop(crop_percent):
+    """Adjust the bottom crop percentage and re-crop the image."""
+    try:
+        state.crop_percent = float(crop_percent)
+
+        if state.current_image is None:
+            return f"Crop set to {crop_percent:.1f}%", None
+
+        if state.scale_detector is None:
+            return f"Crop set to {crop_percent:.1f}%", None
+
+        # Re-crop the image
+        if crop_percent > 0:
+            state.cropped_image = state.scale_detector.crop_scale_bar(
+                state.current_image, crop_percent=crop_percent
+            )
+        else:
+            state.cropped_image = state.current_image.copy()
+
+        # Show the crop line on the image as a preview
+        import cv2
+        vis = state.current_image.copy()
+        H, W = vis.shape[:2]
+        crop_y = int(H * (1 - crop_percent / 100))
+        cv2.line(vis, (0, crop_y), (W, crop_y), (0, 255, 0), 2)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = max(0.4, min(0.55, W / 2000))
+        cv2.putText(vis, f"Crop at {crop_percent:.1f}%", (10, crop_y - 8),
+                    font, font_scale, (0, 0, 0), 3)
+        cv2.putText(vis, f"Crop at {crop_percent:.1f}%", (10, crop_y - 8),
+                    font, font_scale, (0, 255, 0), 1)
+
+        return f"✓ Crop: {crop_percent:.1f}% from bottom", vis
+
+    except Exception as e:
+        return f"❌ Error: {str(e)}", gr.update()
+
+
 def detect_scale_clicked(progress=gr.Progress()):
-    """Handle the Detect Scale button click based on current mode."""
+    """Handle the Detect Scale button click based on current mode.
+
+    Returns: (status, image_viz, crop_slider_value)
+    """
     if state.scale_mode == "Metadata":
         return detect_scale_metadata(progress)
     elif state.scale_mode == "OCR":
         if len(state.ocr_click_points) == 2:
             status, viz, info = detect_scale_ocr_in_box()
-            return status, viz
-        return "❌ Click two corners on the image first", state.current_image
+            return status, viz, gr.update()
+        return "❌ Click two corners on the image first", state.current_image, gr.update()
     elif state.scale_mode == "Manual":
-        return "Use the image clicks and µm input below", state.current_image
-    return "❌ Unknown mode", None
+        return "Use the image clicks and µm input below", state.current_image, gr.update()
+    return "❌ Unknown mode", None, gr.update()
 
 
 def segment_with_sam(progress=gr.Progress()):
@@ -816,7 +877,7 @@ def select_mask_and_analyze(mask_choice, progress=gr.Progress()):
     """Select mask and run initial analysis."""
     try:
         if state.masks is None:
-            return None, None, "❌ No masks available", None, None
+            return gr.update(), gr.update(), "❌ No masks available", gr.update(), gr.update()
 
         # Parse mask index
         mask_index = int(mask_choice.split()[1]) - 1
@@ -865,7 +926,7 @@ def select_mask_and_analyze(mask_choice, progress=gr.Progress()):
         return particle_viz, results_df, status, results_df, stats_df
 
     except Exception as e:
-        return None, None, f"❌ Error: {str(e)}", None, None
+        return gr.update(), gr.update(), f"❌ Error: {str(e)}", gr.update(), gr.update()
 
 
 # ============================================================================
@@ -1152,7 +1213,7 @@ def apply_refinement_changes(progress=gr.Progress()):
     """Apply all pending refinement changes (delete, add, merge, point_refine)."""
     try:
         if state.analyzer is None:
-            return None, None, None, "❌ No analysis available"
+            return gr.update(), gr.update(), "❌ No analysis available", gr.update(), gr.update()
 
         changes_made = False
         status_messages = []
@@ -1213,7 +1274,7 @@ def apply_refinement_changes(progress=gr.Progress()):
             changes_made = True
 
         if not changes_made:
-            return None, None, "No changes to apply", None, None
+            return gr.update(), gr.update(), "No changes to apply", gr.update(), gr.update()
 
         # Clear undo history since changes have been applied
         state.undo_history = []
@@ -1248,17 +1309,17 @@ def apply_refinement_changes(progress=gr.Progress()):
         )
 
     except Exception as e:
-        return None, None, f"❌ Error: {str(e)}", None, None
+        return gr.update(), gr.update(), f"❌ Error: {str(e)}", gr.update(), gr.update()
 
 
 def undo_last_action():
     """Undo the last click (removes last item from pending changes)."""
     try:
         if state.analyzer is None:
-            return None, None, "❌ No analysis available"
+            return gr.update(), gr.update(), "❌ No analysis available"
 
         if not state.undo_history:
-            return None, None, "❌ No actions to undo"
+            return gr.update(), gr.update(), "❌ No actions to undo"
 
         # Restore previous pending state (before last click)
         previous_state = state.undo_history.pop()
@@ -1306,14 +1367,14 @@ def undo_last_action():
         return particle_viz, results_df, status
 
     except Exception as e:
-        return None, None, f"❌ Error: {str(e)}"
+        return gr.update(), gr.update(), f"❌ Error: {str(e)}"
 
 
 def clear_edge_particles(buffer_size):
     """Clear particles whose centroid is within buffer distance from edges."""
     try:
         if state.analyzer is None:
-            return None, None, "❌ No analysis available", None, None
+            return gr.update(), gr.update(), "❌ No analysis available", gr.update(), gr.update()
 
         buffer = int(buffer_size)
         H, W = state.analyzer.mask.shape
@@ -1358,14 +1419,14 @@ def clear_edge_particles(buffer_size):
         )
 
     except Exception as e:
-        return None, None, f"❌ Error: {str(e)}", None, None
+        return gr.update(), gr.update(), f"❌ Error: {str(e)}", gr.update(), gr.update()
 
 
 def clear_all_particles():
     """Clear ALL particles from the mask, giving user a blank canvas to add particles manually."""
     try:
         if state.analyzer is None:
-            return None, None, "❌ No analysis available", None, None
+            return gr.update(), gr.update(), "❌ No analysis available", gr.update(), gr.update()
 
         # Get all current labels and delete them all
         all_labels = [r.label for r in state.analyzer.regions]
@@ -1405,7 +1466,7 @@ def clear_all_particles():
         return particle_viz, results_df, status, results_df, stats_df
 
     except Exception as e:
-        return None, None, f"❌ Error: {str(e)}", None, None
+        return gr.update(), gr.update(), f"❌ Error: {str(e)}", gr.update(), gr.update()
 
 
 def clear_pending_changes():
@@ -1435,9 +1496,9 @@ def clear_pending_changes():
             )
             return particle_viz, "✅ Cleared all pending changes"
         else:
-            return None, "✅ Cleared all pending changes"
+            return gr.update(), "✅ Cleared all pending changes"
     except Exception as e:
-        return None, f"❌ Error: {str(e)}"
+        return gr.update(), f"❌ Error: {str(e)}"
 
 
 # ============================================================================
@@ -1774,6 +1835,14 @@ def create_interface():
                             info="Metadata: TIFF tags | OCR: click box on image | Manual: click endpoints"
                         )
                         detect_btn = gr.Button("🔍 Detect Scale", variant="primary")
+                        crop_percent_slider = gr.Slider(
+                            minimum=0,
+                            maximum=20,
+                            value=7.0,
+                            step=0.5,
+                            label="Bottom Crop (%)",
+                            info="Adjust how much of the bottom to crop (removes scale bar / databar)"
+                        )
                         scale_status = gr.Textbox(label="Status", interactive=False)
 
                         # OCR mode controls (hidden by default)
@@ -2022,6 +2091,12 @@ def create_interface():
 
         detect_btn.click(
             detect_scale_clicked,
+            outputs=[scale_status, current_image, crop_percent_slider]
+        )
+
+        crop_percent_slider.change(
+            adjust_crop,
+            inputs=[crop_percent_slider],
             outputs=[scale_status, current_image]
         )
 
