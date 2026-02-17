@@ -1,4 +1,4 @@
-# CNT Particle Analysis Gradio App Requirements
+# SEM Particle Analysis Gradio App Requirements
 
 # Core dependencies
 gradio>=4.0.0
@@ -19,5 +19,8 @@ git+https://github.com/facebookresearch/segment-anything.git
 # OCR for scale detection
 easyocr>=1.7.0
 
-# Optional but recommended
+# TIFF metadata extraction
+tifffile>=2023.1.0
+
+# Utilities
 tqdm>=4.65.0

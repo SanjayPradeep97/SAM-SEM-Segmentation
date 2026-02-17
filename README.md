@@ -28,13 +28,8 @@ conda install pytorch torchvision -c pytorch
 # For CPU only:
 conda install pytorch torchvision cpuonly -c pytorch
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the package (editable mode)
-cd sem_particle_analysis
+# Install the package and all dependencies
 pip install -e .
-cd ..
 ```
 
 ### 2. Download SAM Weights
