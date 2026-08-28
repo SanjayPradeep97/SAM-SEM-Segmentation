@@ -43,10 +43,12 @@ anaconda_projects/
 # Test data folders (large image datasets)
 Extrusion data for plastic blocks dinning hall plastics/
 
-# Test scripts
-test_*.py
-*.txt
-!requirements.txt
+# Scratch scripts and notes dropped at the repo root. Scoped to the root with
+# a leading slash: an unanchored "test_*.py" also matches tests/test_*.py, which
+# silently kept the real test suite out of every commit.
+/test_*.py
+/*.txt
+!/requirements.txt
 
 # Gradio cache
 gradio_cached_examples/

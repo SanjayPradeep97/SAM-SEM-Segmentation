@@ -124,6 +124,26 @@ pytest                      # everything
 pytest -m "not slow"        # skip tests needing model weights or OCR
 ```
 
+The fast suite takes a few seconds and needs neither SAM weights nor EasyOCR;
+tests that do are marked `slow` and skip themselves with a reason when their
+dependency is missing. Measurements are checked against shapes of exactly known
+size — `tests/synthetic.py` builds micrographs whose scale bar length, printed
+label and particle mask are all ground truth — so a regression shows up as a
+wrong number rather than merely a changed one.
+
+### Optional dependencies
+
+Only two parts of the toolkit need the heavy optional stack:
+
+| Dependency | Needed for | Without it |
+| --- | --- | --- |
+| `easyocr` | Reading a printed scale bar (tier 2) | Scale from metadata or by hand still works; OCR raises `OCRUnavailableError` explaining the fix |
+| `gradio` | The web app | The library and `sem-analyze` are unaffected |
+
+Importing `sem_particle_analysis` pulls in neither. EasyOCR's models load on
+first OCR use rather than when a `ScaleDetector` is constructed, so a
+metadata-only run never pays for them.
+
 ---
 
 ## 📦 What's Included
