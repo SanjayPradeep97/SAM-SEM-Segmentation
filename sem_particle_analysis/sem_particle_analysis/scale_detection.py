@@ -15,11 +15,20 @@ import re
 import logging
 import cv2
 import numpy as np
-import easyocr
 
 from .utils import extract_tiff_metadata
 
 logger = logging.getLogger(__name__)
+
+
+class OCRUnavailableError(ValueError):
+    """
+    Raised when a scale bar must be read but EasyOCR is not installed.
+
+    Subclasses ValueError so that callers already handling a failed OCR attempt —
+    notably ``detect_scale(method='auto')``, which falls back to metadata — treat
+    a missing library as just another way for OCR not to produce an answer.
+    """
 
 
 class ScaleDetector:
@@ -163,15 +172,44 @@ class ScaleDetector:
         """
         Initialize the scale bar detector.
 
+        The OCR reader is not built here. EasyOCR takes several seconds to load
+        its models and drags in a large dependency tree, and neither is needed to
+        read a pixel size out of TIFF metadata — which is the tier that succeeds
+        on most instrument exports. Constructing a detector is therefore free,
+        and OCR is paid for only by the images that actually need it.
+
         Args:
             use_gpu (bool): Whether to use GPU for OCR (default: False)
         """
-        print("Initializing OCR reader...")
-        self.reader = easyocr.Reader(['en'], gpu=use_gpu)
+        self.use_gpu = use_gpu
+        self._reader = None
         self.last_detection = None
         self.last_metadata_result = None
         self.last_ocr_result = None
-        print("OCR reader initialized")
+
+    @property
+    def reader(self):
+        """
+        The EasyOCR reader, built on first use.
+
+        Raises:
+            ScaleDetectionError: If EasyOCR is not installed. Raised here rather
+                than at import time so that metadata-based scale detection, the
+                analyzer and the segmenter all remain usable without it.
+        """
+        if self._reader is None:
+            try:
+                import easyocr
+            except ImportError as exc:  # pragma: no cover - depends on install
+                raise OCRUnavailableError(
+                    "Reading a printed scale bar needs EasyOCR, which is not "
+                    "installed. Install it with 'pip install easyocr', or use a "
+                    "scale from file metadata or entered by hand."
+                ) from exc
+            print("Initializing OCR reader...")
+            self._reader = easyocr.Reader(['en'], gpu=self.use_gpu)
+            print("OCR reader initialized")
+        return self._reader
 
     def detect_scale(self, image, file_path=None, method='auto',
                      region_x=0.75, region_y=0.95,
@@ -1233,11 +1271,16 @@ class ScaleDetector:
             {"text_threshold": 0.3, "low_text": 0.2, "allowlist": self.OCR_ALLOWLIST},
         ]
 
+        # Resolved once, outside the loop: a missing EasyOCR must surface as its
+        # own error rather than being swallowed by the per-attempt except and
+        # reported as "no text found".
+        reader = self.reader
+
         best = ""
         for image in images:
             for options in attempts:
                 try:
-                    found = self.reader.readtext(image, **options)
+                    found = reader.readtext(image, **options)
                 except Exception:
                     continue
                 text = " ".join(txt for _, txt, _ in found)

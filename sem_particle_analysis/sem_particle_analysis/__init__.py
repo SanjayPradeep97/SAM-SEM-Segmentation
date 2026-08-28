@@ -6,7 +6,7 @@ using Meta's Segment Anything Model (SAM).
 """
 
 from .model import SAMModel, discover_checkpoints, infer_model_type
-from .scale_detection import ScaleDetector
+from .scale_detection import OCRUnavailableError, ScaleDetector
 from .segmentation import ParticleSegmenter
 from .analysis import ParticleAnalyzer
 from .data_manager import ResultsManager
@@ -32,6 +32,7 @@ __all__ = [
     "discover_checkpoints",
     "infer_model_type",
     "ScaleDetector",
+    "OCRUnavailableError",
     "ParticleSegmenter",
     "ParticleAnalyzer",
     "ResultsManager",
