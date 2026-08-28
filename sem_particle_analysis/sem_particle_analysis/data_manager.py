@@ -4,9 +4,79 @@ Results Data Management
 Handles saving and loading of particle analysis results to CSV files.
 """
 
+import ast
+import math
 import os
+import re
 import pandas as pd
 import random
+
+# Matches the numpy 2 scalar repr, e.g. "np.float64(896.0)". str() of a list of
+# numpy scalars produces these, and neither ast.literal_eval nor a plain eval in
+# a namespace without numpy can read them back.
+_NUMPY_SCALAR = re.compile(r"np\.\w+\(([^()]*)\)")
+
+
+def serialise_measurements(values):
+    """
+    Render a list of measurements for storage in a CSV cell.
+
+    Values coming out of scikit-image are numpy scalars, and since numpy 2 their
+    repr is ``np.float64(896.0)`` rather than ``896.0``. Writing ``str(values)``
+    therefore produced cells that no reader could parse: ``ast.literal_eval``
+    rejects the call syntax, and ``eval`` raises NameError wherever numpy is not
+    in scope. Coercing to plain floats keeps the cell readable by anything.
+
+    Args:
+        values: Iterable of numbers.
+
+    Returns:
+        str: A plain Python list literal, e.g. "[896.0, 1024.0]".
+    """
+    return str([float(v) for v in (values or [])])
+
+
+def parse_measurement_list(cell):
+    """
+    Read a measurement list back out of a CSV cell.
+
+    Tolerates every form the column has held: a plain list literal, an empty
+    list, a blank or missing cell, and the ``np.float64(...)`` reprs written by
+    older runs under numpy 2. A cell that cannot be parsed at all raises, rather
+    than being silently treated as "no particles" — an empty distribution that
+    should have held data is worse than an error, because it looks like a result.
+
+    Args:
+        cell: The raw CSV cell (str, NaN, or None).
+
+    Returns:
+        list[float]: The measurements, empty only if the cell genuinely is.
+
+    Raises:
+        ValueError: If the cell holds something unparseable.
+    """
+    if cell is None:
+        return []
+    if isinstance(cell, float) and math.isnan(cell):
+        return []
+    if isinstance(cell, (list, tuple)):
+        return [float(v) for v in cell]
+
+    text = str(cell).strip()
+    if text in ("", "[]", "nan", "None"):
+        return []
+
+    # Unwrap numpy scalar reprs left behind by earlier runs.
+    text = _NUMPY_SCALAR.sub(r"\1", text)
+
+    try:
+        parsed = ast.literal_eval(text)
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(f"Could not parse measurement list from {cell!r}") from exc
+
+    if not isinstance(parsed, (list, tuple)):
+        raise ValueError(f"Expected a list of measurements, got {parsed!r}")
+    return [float(v) for v in parsed]
 
 
 class ResultsManager:
@@ -92,15 +162,17 @@ class ResultsManager:
             areas_nm2 = []
             diams_nm = []
 
-        # Create new row
+        # Create new row. The measurement lists go through serialise_measurements
+        # rather than str(): they hold numpy scalars, whose repr since numpy 2 is
+        # "np.float64(896.0)" — a form no reader can parse back.
         new_row = {
             "file_name": file_name,
             "num_particles": num_particles,
             "nm_per_px": measurements.get('nm_per_px'),
-            "particle_areas_px": str(areas_px),
-            "equiv_diameters_px": str(diams_px),
-            "particle_areas_nm2": str(areas_nm2),
-            "equiv_diameters_nm": str(diams_nm)
+            "particle_areas_px": serialise_measurements(areas_px),
+            "equiv_diameters_px": serialise_measurements(diams_px),
+            "particle_areas_nm2": serialise_measurements(areas_nm2),
+            "equiv_diameters_nm": serialise_measurements(diams_nm)
         }
 
         # Append in the order this file's header actually uses. Writing a fixed
