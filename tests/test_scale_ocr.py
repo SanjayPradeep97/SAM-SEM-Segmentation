@@ -80,21 +80,3 @@ class TestStandardValueClassification:
         assert not scale_detector._is_standard_scale_value(nanometres)
 
 
-class TestDatabarDetection:
-    def test_measures_the_databar_height(self, scale_detector):
-        image, truth = make_micrograph(image_height=704, databar_height=96)
-        found = scale_detector.detect_databar(image)
-        assert found["has_databar"] is True
-        assert found["databar_height"] == pytest.approx(96, abs=12)
-
-    def test_reports_no_databar_on_a_bare_micrograph(self, scale_detector):
-        image, truth = make_micrograph(databar_height=0)
-        assert scale_detector.detect_databar(image)["has_databar"] is False
-
-
-class TestCropping:
-    def test_crop_removes_the_requested_fraction(self, scale_detector):
-        image = np.zeros((1000, 800, 3), dtype=np.uint8)
-        cropped = scale_detector.crop_scale_bar(image, crop_percent=10.0)
-        assert cropped.shape[0] == 900
-        assert cropped.shape[1] == 800

@@ -93,6 +93,14 @@ class ScaleDetector:
     # every measurement, so such results are flagged for manual confirmation.
     STANDARD_MANTISSAS = (1.0, 1.5, 2.0, 2.5, 3.0, 5.0)
 
+    # Databar geometry. Instruments put the acquisition information in a solid
+    # strip below the micrograph; these bound what counts as one.
+    DATABAR_MAX_FRACTION = 0.15      # tallest acceptable bar, as a share of height
+    DATABAR_SCAN_FRACTION = 0.25     # scan past that, so "no edge" is detectable
+    DATABAR_MEDIAN_TOLERANCE = 8.0   # grey levels the background may drift by
+    DATABAR_MIN_HEIGHT_PX = 10
+    DATABAR_MIN_SEPARATION = 12.0    # a bar must differ from the frame above it
+
     # Registry for custom tag parsers (extensibility for new microscope formats)
     # Format: {tag_code: [(parser_func, manufacturer_name), ...]}
     _TAG_PARSERS = {}
@@ -1522,25 +1530,54 @@ class ScaleDetector:
                     except (ValueError, TypeError):
                         pass
 
-        # Method 2: Detect a uniform-color strip at the bottom
-        # SEM databars are typically uniform black or dark gray
+        # Method 2: find the solid strip at the bottom by locating its top edge.
+        #
+        # A databar is a block of one background colour carrying text and a rule.
+        # Its rows are therefore not uniform — a row crossing the label has a
+        # high standard deviation — but its row *median* is the background level
+        # throughout, because the glyphs cover only a small part of the width.
+        # Matching on the median tolerates the text while still changing sharply
+        # at the boundary with the micrograph.
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         else:
             gray = image
 
-        # Scan from largest to smallest candidate bar height (up to 15% of image)
-        max_bar_height = int(H * 0.15)
-        for test_height in range(max_bar_height, 10, -2):
-            bottom_strip = gray[H - test_height:, :]
-            row_stds = np.std(bottom_strip, axis=1)
-            # A databar has very low per-row variation (uniform color per row)
-            if np.mean(row_stds) < 35:
-                result['has_databar'] = True
-                result['databar_height'] = test_height
-                result['databar_fraction'] = test_height / H
-                return result
+        row_medians = np.median(gray, axis=1).astype(float)
+        base = row_medians[H - 1]
 
+        # Walk up from the last row while the background level holds. Scanning
+        # further than the largest acceptable bar is deliberate: it is what makes
+        # "no boundary found" distinguishable from "a very tall bar".
+        scan_limit = min(H, int(H * self.DATABAR_SCAN_FRACTION))
+        height = 0
+        while (height < scan_limit
+               and abs(row_medians[H - 1 - height] - base) <= self.DATABAR_MEDIAN_TOLERANCE):
+            height += 1
+
+        # Too short to be a databar, or no top edge inside the scan window. The
+        # latter means the whole bottom quarter of the frame looks like its last
+        # row — a featureless image, not an image with a bar stuck on it. The
+        # previous implementation scanned largest-first and returned the first
+        # window that passed, so it reported the largest uniform-looking window
+        # rather than the actual edge: it overestimated the height on real
+        # databars, and claimed one on images that had none. Both cost real
+        # micrograph area, since cli.crop_databar trims whatever is reported.
+        if not (self.DATABAR_MIN_HEIGHT_PX <= height <= int(H * self.DATABAR_MAX_FRACTION)):
+            return result
+
+        above = gray[:H - height]
+        if above.size == 0:
+            return result
+
+        # A databar is visibly a different block from the image above it.
+        separation = abs(float(np.median(gray[H - height:])) - float(np.median(above)))
+        if separation < self.DATABAR_MIN_SEPARATION:
+            return result
+
+        result['has_databar'] = True
+        result['databar_height'] = height
+        result['databar_fraction'] = height / H
         return result
 
     # Where scale bars are found, as (region_x, region_y, region_width,

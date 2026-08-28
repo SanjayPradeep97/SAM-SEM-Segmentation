@@ -127,9 +127,9 @@ def crop_databar(detector, image, args):
     try:
         databar = detector.detect_databar(image)
     except Exception:
-        databar = {}
+        databar = None
 
-    if databar.get("has_databar") and databar.get("databar_height"):
+    if databar and databar.get("has_databar") and databar.get("databar_height"):
         keep = height - int(databar["databar_height"])
         if 0 < keep < height:
             return image[:keep].copy(), {
@@ -138,6 +138,17 @@ def crop_databar(detector, image, args):
                 "fraction": round(databar.get("databar_fraction", 0.0), 4),
             }
 
+    if databar is not None:
+        # Detection ran and found no databar. That is the normal case for TEM
+        # frames, where the scale bar is burned into the micrograph itself and
+        # there is no strip below it — trimming a fixed percentage would throw
+        # away real image. Keep the frame; the bar is excluded from segmentation
+        # rather than cropped.
+        return image, {"method": "none", "rows_removed": 0}
+
+    # Detection itself failed, so nothing is known either way; fall back to the
+    # historical fixed percentage rather than risk leaving a databar in frame,
+    # whose text and rules segment into spurious particles.
     cropped = detector.crop_scale_bar(image, crop_percent=DEFAULT_CROP_PERCENT)
     return cropped, {"method": "fallback-percent", "percent": DEFAULT_CROP_PERCENT,
                      "rows_removed": height - cropped.shape[0]}
