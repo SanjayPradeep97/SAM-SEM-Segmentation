@@ -9,6 +9,7 @@ Supports two detection methods:
 2. OCR-based Scale Bar Detection (fallback) - Reads scale bar text using OCR
 """
 
+import math
 import os
 import re
 import logging
@@ -40,7 +41,17 @@ class ScaleDetector:
         'um': 1000.0,
         'µm': 1000.0,
         'μm': 1000.0,  # Different mu character
-        'uum': 1000.0,  # Common OCR misread
+        # Common OCR misreads of "µm". The µ glyph is small and frequently comes
+        # back as H, p, j, l or i; "rn" is the classic misread of "m".
+        'uum': 1000.0,
+        'hm': 1000.0,
+        'pum': 1000.0,
+        'jum': 1000.0,
+        'lum': 1000.0,
+        'ium': 1000.0,
+        'urn': 1000.0,
+        'prn': 1000.0,
+        'hrn': 1000.0,
         'mm': 1_000_000.0,
         'cm': 10_000_000.0,
         'm': 1_000_000_000.0,
@@ -54,6 +65,24 @@ class ScaleDetector:
     # Valid pixel size range for SEM/TEM images (nm/pixel)
     # 0.01 nm = highest resolution TEM, 200,000 nm = lowest mag SEM
     VALID_PIXEL_SIZE_RANGE = (0.01, 200_000)
+
+    # Maximum plausible scale bar thickness, as a fraction of image height and as
+    # an absolute floor for small images. Instruments draw the bar as a thin rule
+    # (well under 1% of frame height); anything thicker is a filled databar or
+    # some other block, not a scale bar.
+    MAX_BAR_THICKNESS_FRAC = 0.02
+    MIN_BAR_THICKNESS_PX = 6
+
+    # Plausible physical length for a printed scale bar, in nm: from atomic
+    # resolution (1 Å) up to 1 mm. A parsed value outside this came from a
+    # misread unit, and acting on it would rescale every measurement.
+    VALID_SCALE_BAR_NM = (0.1, 1_000_000.0)
+
+    # Instruments label scale bars with a 1/2/5 mantissa (100 nm, 200 nm, 500 nm,
+    # 1 µm, ...). A parsed value off this grid — "7 µm", "1100 nm" — is nearly
+    # always a misread digit, and a misread digit is a multiplicative error in
+    # every measurement, so such results are flagged for manual confirmation.
+    STANDARD_MANTISSAS = (1.0, 1.5, 2.0, 2.5, 3.0, 5.0)
 
     # Registry for custom tag parsers (extensibility for new microscope formats)
     # Format: {tag_code: [(parser_func, manufacturer_name), ...]}
@@ -1001,28 +1030,43 @@ class ScaleDetector:
         best_binary = None
         best_polarity = None
 
+        # A scale bar is a thin rule, not a filled block. Cap candidate thickness
+        # relative to the full image so the limit doesn't depend on how tightly
+        # the user drew the search box.
+        max_thickness = max(self.MIN_BAR_THICKNESS_PX,
+                            int(round(H * self.MAX_BAR_THICKNESS_FRAC)))
+
+        candidates = {}
         for pol in polarities_to_try:
             if pol == 'bright':
                 _, binary255 = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
             else:
                 _, binary255 = cv2.threshold(gray, 255 - threshold, 255, cv2.THRESH_BINARY_INV)
 
-            line = self._find_scale_line_morphological(binary255)
+            line = self._find_scale_line_morphological(binary255, max_thickness=max_thickness)
             if line is not None:
-                leftmost, rightmost, row = line
+                leftmost, rightmost, row, spanned = line
                 length = rightmost - leftmost
-                if best_line is None or length > (best_line[1] - best_line[0]):
+                candidates[pol] = length
+                # A bar with clear background on both sides always beats one that
+                # ran to the crop edge, regardless of which is longer.
+                better = (
+                    best_line is None
+                    or (best_line[3] and not spanned)
+                    or (best_line[3] == spanned and length > (best_line[1] - best_line[0]))
+                )
+                if better:
                     best_line = line
                     best_binary = binary255
                     best_polarity = pol
 
         if best_line is None:
             raise ValueError(
-                f"No scale bar line found in region. "
-                f"Try adjusting the region position, polarity, or threshold."
+                "No scale bar line found in region. "
+                "Try adjusting the region position, polarity, or threshold."
             )
 
-        leftmost, rightmost, top_row = best_line
+        leftmost, rightmost, top_row, spanned_crop = best_line
         pixel_length = rightmost - leftmost
 
         if pixel_length < 5:
@@ -1031,15 +1075,75 @@ class ScaleDetector:
                 f"Adjust region to cover the scale bar."
             )
 
-        # Perform OCR on the crop region
-        ocr_pairs = self.reader.readtext(crop)
-        ocr_text = " ".join(txt for _, txt, _ in ocr_pairs)
+        ocr_text = self._read_text(crop)
 
         # Extract scale value and units
-        scale_nm = self._parse_scale_text(ocr_text)
+        salvaged = False
+        try:
+            scale_nm = self._parse_scale_text(ocr_text)
+        except ValueError:
+            scale_nm = self._salvage_micron_reading(ocr_text)
+            if scale_nm is None:
+                raise
+            salvaged = True
 
-        # Calculate conversion factor
+        # The OCR path previously trusted whatever the text parsed to. A single
+        # misread character can move the value by orders of magnitude, so check
+        # both the label and the resulting pixel size before returning them.
+        low, high = self.VALID_SCALE_BAR_NM
+        if not low <= scale_nm <= high:
+            raise ValueError(
+                f"Implausible scale bar length {scale_nm:g} nm from OCR text "
+                f"'{ocr_text}'. Expected {low:g}-{high:g} nm; the unit was "
+                f"probably misread."
+            )
+
         conversion = scale_nm / pixel_length
+        _value, status, message = self._validate_pixel_size(
+            conversion, source="scale bar OCR"
+        )
+        if status != 'valid':
+            raise ValueError(f"{message} (from OCR text '{ocr_text}')")
+
+        # Flag results that should not be trusted without a look at the overlay,
+        # rather than silently returning a number.
+        warning = None
+        if salvaged:
+            # A guessed unit is the one thing that can still be a factor-of-1000
+            # error, so it is only accepted when the result is a standard bar
+            # value, and it is always flagged for confirmation.
+            if not self._is_standard_scale_value(scale_nm):
+                raise ValueError(
+                    f"Could not read the scale unit from '{ocr_text}', and the "
+                    f"micron reading it implies ({scale_nm:g} nm) is not a standard "
+                    f"bar value. Set the scale manually."
+                )
+            warning = (
+                f"Unit unreadable in '{ocr_text}' — assumed µm, giving "
+                f"{scale_nm / 1000:g} µm / {pixel_length}px. Confirm against the "
+                f"image before trusting these measurements."
+            )
+        elif not self._is_standard_scale_value(scale_nm):
+            warning = (
+                f"Scale bar read as {scale_nm:g} nm from OCR text '{ocr_text}', "
+                f"which is not a standard bar value — most likely a misread digit "
+                f"(1 and 7 are commonly confused). Confirm against the image."
+            )
+        elif spanned_crop:
+            warning = (
+                f"Measured bar ({pixel_length}px) runs the full width of the search "
+                f"region, so its true ends may be outside the box. Widen the region "
+                f"so there is background on both sides of the bar, then re-detect."
+            )
+        elif len(candidates) > 1:
+            lo, hi = min(candidates.values()), max(candidates.values())
+            if hi > lo * 1.1:
+                warning = (
+                    f"Ambiguous scale bar: bright polarity measured "
+                    f"{candidates.get('bright')}px, dark polarity {candidates.get('dark')}px. "
+                    f"Used '{best_polarity}' ({hi}px). Verify the overlay, or set "
+                    f"polarity explicitly."
+                )
 
         # Store results
         self.last_detection = {
@@ -1051,12 +1155,99 @@ class ScaleDetector:
             'binary_image': best_binary,
             'line_coords': (leftmost, rightmost, top_row),
             'threshold': threshold,
-            'polarity_used': best_polarity
+            'polarity_used': best_polarity,
+            'polarity_candidates': candidates,
+            'warning': warning,
         }
+
+        if warning:
+            print(f"⚠️  {warning}")
 
         return self.last_detection
 
-    def _find_scale_line_morphological(self, binary255):
+    # Scale bar labels are often only 10-20px tall, which EasyOCR reads poorly —
+    # it tends to drop the leading digit entirely, turning "2 µm" into "µm".
+    # Enlarging the crop first recovers those digits.
+    OCR_TARGET_HEIGHT = 200
+
+    # Characters that can appear in a scale label. Restricting the alphabet helps
+    # EasyOCR commit to a faint digit instead of discarding it.
+    OCR_ALLOWLIST = "0123456789.nmuµ "
+
+    @classmethod
+    def _is_standard_scale_value(cls, scale_nm):
+        """True if ``scale_nm`` has a mantissa instruments actually print."""
+        if scale_nm <= 0:
+            return False
+        exponent = math.floor(math.log10(scale_nm))
+        mantissa = scale_nm / (10 ** exponent)
+        return any(abs(mantissa - m) < 0.01 for m in cls.STANDARD_MANTISSAS)
+
+    # Unit tokens EasyOCR produces when it mangles "µm": the µ becomes u/H/X/J/L
+    # and the m becomes rr/II/ll/ff/IT. A genuine "nm" is two plain letters and
+    # comes back correctly, so an unreadable unit is overwhelmingly a micron.
+    _GARBAGE_UNIT = re.compile(r'^[^\dn\s]{1,6}[\]\)\}]?$', re.I)
+
+    @classmethod
+    def _salvage_micron_reading(cls, ocr_text):
+        """
+        Recover the value from a label whose unit OCR mangled beyond matching.
+
+        Returns nanometres, or None when the text gives no usable number or the
+        unit might genuinely have been "nm" — guessing wrong here is a factor of
+        1000, so anything ambiguous is refused rather than assumed.
+        """
+        match = re.search(r'(\d+(?:\.\d+)?)\s*(\S*)', ocr_text.strip())
+        if not match:
+            return None
+        value, unit = float(match.group(1)), match.group(2).strip()
+        if not unit or not cls._GARBAGE_UNIT.match(unit):
+            return None
+        return value * 1000.0  # µm
+
+    def _read_text(self, crop):
+        """
+        OCR a crop, escalating effort until a digit comes back.
+
+        A label like "1 µm" is mostly thin strokes, and at default sensitivity
+        EasyOCR routinely returns just "µm" — the value silently lost. Each
+        attempt below is progressively more aggressive; the first reading that
+        contains a digit wins, since the number is the part that matters.
+
+        Returns:
+            str: Recognised text, space-joined.
+        """
+        images = [crop]
+        height = crop.shape[0]
+        if 0 < height < self.OCR_TARGET_HEIGHT:
+            factor = min(4.0, self.OCR_TARGET_HEIGHT / height)
+            enlarged = cv2.resize(crop, None, fx=factor, fy=factor,
+                                  interpolation=cv2.INTER_CUBIC)
+            # Keep the original as a fallback so nothing that used to be
+            # readable stops being read.
+            images = [enlarged, crop]
+
+        attempts = [
+            {},
+            {"text_threshold": 0.4, "low_text": 0.3},
+            {"text_threshold": 0.3, "low_text": 0.2, "allowlist": self.OCR_ALLOWLIST},
+        ]
+
+        best = ""
+        for image in images:
+            for options in attempts:
+                try:
+                    found = self.reader.readtext(image, **options)
+                except Exception:
+                    continue
+                text = " ".join(txt for _, txt, _ in found)
+                if any(ch.isdigit() for ch in text):
+                    return text
+                if len(text) > len(best):
+                    best = text
+        return best
+
+    def _find_scale_line_morphological(self, binary255, max_thickness=None):
         """
         Find a horizontal scale bar line using morphological operations.
 
@@ -1065,6 +1256,11 @@ class ScaleDetector:
 
         Args:
             binary255 (np.ndarray): Binary image (0 or 255), uint8
+            max_thickness (int, optional): Reject candidates taller than this many
+                pixels. A real scale bar is a thin line; without this guard an
+                inverted threshold over a solid databar yields one region-spanning
+                blob that looks "wide and thin" whenever the crop is short, and it
+                wins on width every time. If None, no thickness limit is applied.
 
         Returns:
             tuple: (leftmost, rightmost, row) of the best line, or None
@@ -1091,19 +1287,41 @@ class ScaleDetector:
         if num_labels <= 1:
             return None
 
-        # Find the widest component (skip background label 0)
-        best_label = None
-        best_width = 0
+        # Find the widest component (skip background label 0).
+        # Components spanning the crop edge-to-edge are tracked separately: they
+        # are almost always an artifact of the search box clipping a band of the
+        # micrograph or databar, not a scale bar. A real bar has background on at
+        # least one side. They are only used if nothing better exists, so that a
+        # box drawn exactly around the bar still works.
+        best_label = best_spanning_label = None
+        best_width = best_spanning_width = 0
         for label_id in range(1, num_labels):
             comp_w = stats[label_id, cv2.CC_STAT_WIDTH]
             comp_h = stats[label_id, cv2.CC_STAT_HEIGHT]
-            # Scale bar lines are wide and thin (aspect ratio > 5:1)
-            if comp_w > best_width and comp_w > comp_h * 3:
+            # Scale bar lines are wide and thin (aspect ratio > 3:1)
+            if comp_w <= comp_h * 3:
+                continue
+            # ...and thin in absolute terms. The aspect test alone is not enough:
+            # a solid databar filling a short crop still satisfies w > 3h.
+            if max_thickness is not None and comp_h > max_thickness:
+                continue
+
+            comp_x = stats[label_id, cv2.CC_STAT_LEFT]
+            spans_crop = comp_x == 0 and (comp_x + comp_w) >= w
+            if spans_crop:
+                if comp_w > best_spanning_width:
+                    best_spanning_width = comp_w
+                    best_spanning_label = label_id
+            elif comp_w > best_width:
                 best_width = comp_w
                 best_label = label_id
 
+        spanned = False
         if best_label is None:
-            return None
+            if best_spanning_label is None:
+                return None
+            best_label = best_spanning_label
+            spanned = True
 
         # Get the row and column extents of the best component
         component_mask = (labels == best_label)
@@ -1113,7 +1331,7 @@ class ScaleDetector:
         leftmost = int(cols.min())
         rightmost = int(cols.max())
 
-        return (leftmost, rightmost, bar_row)
+        return (leftmost, rightmost, bar_row, spanned)
 
     # Known SEM instrument parameter patterns that should NOT be treated as scale
     # These are values like "8.8 mm" (working distance), "10.00 kV", etc.
@@ -1147,7 +1365,13 @@ class ScaleDetector:
         """
         # Match patterns like "100 nm", "1 μm", "500nm", "10 A", etc.
         # Extended pattern to include more units
-        pattern = r'(\d+(?:\.\d+)?)\s*(nm|um|µm|μm|uum|mm|cm|m|pm|a|å|angstrom|angstroms)'
+        # Bare "m" and "pm" are deliberately absent. A micrograph scale bar is
+        # never labelled in metres, and picometre bars do not occur on these
+        # instruments — but "µm" is very often misread as "m" or "pm", which
+        # previously yielded scales off by a factor of a million or more.
+        pattern = (r'(\d+(?:\.\d+)?)\s*'
+                   r'(nm|uum|pum|jum|lum|ium|prn|hrn|urn|um|µm|μm|hm|mm|cm|'
+                   r'angstroms|angstrom|å|a)')
 
         # Find ALL matches, not just the first — then filter out instrument params
         candidates = []
@@ -1275,6 +1499,62 @@ class ScaleDetector:
                 return result
 
         return result
+
+    # Where scale bars are found, as (region_x, region_y, region_width,
+    # region_height). SEM instruments put the bar in a databar at bottom-right;
+    # JEOL TEM burns it into the bottom-left of the frame itself.
+    SEARCH_REGIONS = (
+        ("bottom-left", 0.14, 0.955, 0.28, 0.085),
+        ("bottom-right", 0.80, 0.955, 0.34, 0.085),
+        ("bottom-left-tall", 0.16, 0.93, 0.32, 0.14),
+        ("bottom-right-tall", 0.78, 0.93, 0.40, 0.14),
+        ("bottom-strip", 0.5, 0.96, 1.0, 0.08),
+    )
+
+    def detect_scale_bar_anywhere(self, image, regions=None, **kwargs):
+        """
+        Look for a scale bar in each of the usual places and return the best hit.
+
+        Callers otherwise have to know in advance which corner a given microscope
+        writes to, which differs by vendor and even by export setting. A result
+        with no warning is preferred over a flagged one; a flagged result is
+        preferred over nothing.
+
+        Args:
+            image (np.ndarray): RGB image.
+            regions: Iterable of (name, x, y, width, height); defaults to
+                ``SEARCH_REGIONS``.
+            **kwargs: Passed through to ``detect_scale_bar``.
+
+        Returns:
+            dict: As ``detect_scale_bar``, plus ``region_name``.
+
+        Raises:
+            ValueError: If no region yields a usable scale bar.
+        """
+        flagged = None
+        errors = []
+        for name, x, y, width, height in (regions or self.SEARCH_REGIONS):
+            try:
+                result = self.detect_scale_bar(
+                    image, region_x=x, region_y=y,
+                    region_width=width, region_height=height, **kwargs
+                )
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                continue
+            result['region_name'] = name
+            if not result.get('warning'):
+                return result
+            if flagged is None:
+                flagged = result
+
+        if flagged is not None:
+            return flagged
+        raise ValueError(
+            "No scale bar found in any of the usual positions. Tried — "
+            + "; ".join(errors)
+        )
 
     def crop_scale_bar(self, image, crop_percent=7.0):
         """

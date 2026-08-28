@@ -11,7 +11,6 @@ Available models:
 - ViT-B (vit_b): Fastest, smallest model (358 MB)
 """
 
-import os
 import urllib.request
 from pathlib import Path
 
@@ -103,7 +102,7 @@ def main():
         print(f"\n📥 Downloading {model['filename']} ({model['size']})...")
         try:
             download_file(model["url"], destination)
-            print(f"✓ Downloaded successfully!")
+            print("✓ Downloaded successfully!")
         except Exception as e:
             print(f"✗ Error downloading {model['filename']}: {e}")
 

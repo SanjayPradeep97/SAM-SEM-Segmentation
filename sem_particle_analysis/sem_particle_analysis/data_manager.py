@@ -33,10 +33,13 @@ class ResultsManager:
 
         self.csv_file = csv_file
 
-        # Define column structure
+        # Define column structure. nm_per_px is recorded so a row measured in
+        # pixels — because no scale could be read — still says what it would have
+        # been calibrated with, and so any nm value can be traced back.
         self.columns = [
             "file_name",
             "num_particles",
+            "nm_per_px",
             "particle_areas_px",
             "equiv_diameters_px",
             "particle_areas_nm2",
@@ -93,14 +96,22 @@ class ResultsManager:
         new_row = {
             "file_name": file_name,
             "num_particles": num_particles,
+            "nm_per_px": measurements.get('nm_per_px'),
             "particle_areas_px": str(areas_px),
             "equiv_diameters_px": str(diams_px),
             "particle_areas_nm2": str(areas_nm2),
             "equiv_diameters_nm": str(diams_nm)
         }
 
-        # Append to CSV
-        pd.DataFrame([new_row]).to_csv(
+        # Append in the order this file's header actually uses. Writing a fixed
+        # field order with header=False silently shifts values into the wrong
+        # columns whenever the target CSV has a different or older schema —
+        # which is exactly what resuming someone else's results file does.
+        if not os.path.exists(self.csv_file):
+            self._create_csv()
+        columns = list(self.results_df.columns) or self.columns
+
+        pd.DataFrame([new_row]).reindex(columns=columns).to_csv(
             self.csv_file,
             mode='a',
             index=False,

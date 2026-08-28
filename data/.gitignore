@@ -1,0 +1,12 @@
+# Image data and analysis outputs are not tracked.
+*.tif
+*.tiff
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.json
+
+# ...but keep this directory and its README in the repo.
+!.gitignore
+!README.md

@@ -319,9 +319,6 @@ class InteractiveRefiner:
             self.current_sam_mask = None
             return
 
-        # Compute ROI box from base mask
-        roi_box = self._compute_roi_box_from_basemask(pad=10)
-
         # Get SAM predictions
         refined_mask, score = self.segmenter.refine_with_sam(
             self.image,

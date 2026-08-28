@@ -39,6 +39,9 @@ dependencies = [
     "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
 ]
 
+[project.scripts]
+sem-analyze = "sem_particle_analysis.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",

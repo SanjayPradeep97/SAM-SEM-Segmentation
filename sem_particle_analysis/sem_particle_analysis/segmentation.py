@@ -88,6 +88,89 @@ class ParticleSegmenter:
 
         return self.masks, self.scores
 
+    # A credible mask covers some but not most of the frame. SAM's full-image box
+    # prompt reliably also returns a near-empty and a near-complete candidate.
+    MIN_FOREGROUND_FRACTION = 0.0005
+    MAX_FOREGROUND_FRACTION = 0.35
+
+    # Features must actually differ in brightness from their surroundings by at
+    # least this many grey levels. Without it, a mask covering half a frame of
+    # background speckle outranks a real object on any size-based measure.
+    MIN_CONTRAST = 6.0
+
+    def rank_candidates(self, image, masks=None, top_k=3, dark_features=None,
+                        exclude=None):
+        """
+        Order the mask candidates by how convincingly they isolate real features.
+
+        SAM returns three candidates for a full-image box prompt, and either
+        polarity of each may be the one containing the objects — so there are six
+        possibilities, and picking by confidence score or by area chooses wrongly
+        often enough to matter. Ranking by contrast (is the enclosed region really
+        brighter or darker than the rest?) picks the right one far more reliably.
+
+        Args:
+            image (np.ndarray): The image the masks were generated from.
+            masks (np.ndarray, optional): Candidates; defaults to the last set
+                produced by segment_image.
+            top_k (int): How many candidates to return.
+            dark_features (bool, optional): True if objects are darker than the
+                background (typical for TEM), False if brighter (typical for SEM
+                particles). Auto-detected when None.
+            exclude (np.ndarray, optional): Boolean mask of pixels to blank out
+                before scoring, e.g. a burned-in scale bar.
+
+        Returns:
+            list[dict]: Ordered best-first, each with keys ``mask``,
+            ``mask_index``, ``inverted``, ``fraction``, ``contrast`` and ``score``.
+        """
+        if masks is None:
+            masks = self.masks
+        if masks is None:
+            raise RuntimeError("No masks available. Run segment_image() first.")
+
+        grey = image[..., 0] if image.ndim == 3 else image
+        grey = grey.astype(np.float64)
+
+        candidates = []
+        for index in range(len(masks)):
+            base = masks[index].astype(bool)
+            for inverted in (True, False):
+                # invert=True matches get_binary_mask(invert=True): the objects
+                # are what the raw SAM mask leaves out.
+                candidate = ~base if inverted else base
+                if exclude is not None:
+                    candidate = candidate & ~exclude
+                fraction = float(candidate.mean())
+                if not (self.MIN_FOREGROUND_FRACTION <= fraction
+                        <= self.MAX_FOREGROUND_FRACTION):
+                    continue
+                if not candidate.any() or candidate.all():
+                    continue
+
+                inside = grey[candidate].mean()
+                outside = grey[~candidate].mean()
+                difference = outside - inside  # positive when features are darker
+
+                if dark_features is None:
+                    contrast = abs(difference)
+                else:
+                    contrast = difference if dark_features else -difference
+                if contrast < self.MIN_CONTRAST:
+                    continue
+
+                candidates.append({
+                    "mask": candidate,
+                    "mask_index": index,
+                    "inverted": inverted,
+                    "fraction": fraction,
+                    "contrast": float(contrast),
+                    "score": float(self.scores[index]) if self.scores is not None else None,
+                })
+
+        candidates.sort(key=lambda c: c["contrast"], reverse=True)
+        return candidates[:top_k]
+
     def select_mask(self, mask_index=None):
         """
         Select a specific mask or automatically choose the best one.

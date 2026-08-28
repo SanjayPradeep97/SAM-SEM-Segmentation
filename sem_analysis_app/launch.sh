@@ -26,5 +26,6 @@ echo ""
 echo "Press Ctrl+C to stop the application"
 echo ""
 
-# Launch the app
-python3 sem_analysis_app.py
+# Launch the app (module lives one directory up, so run from the repo root)
+cd "$(dirname "$0")/.."
+python3 -m sem_analysis_app

@@ -6,7 +6,6 @@ Provides image overlay and plotting functions optimized for Gradio display.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage import measure
 import cv2
 
 
@@ -147,17 +146,18 @@ def create_point_refine_visualization(image, refined_mask, point_coords, point_l
     return vis_image
 
 
-def visualize_three_masks(image, masks, scores):
+def visualize_three_masks(image, masks, labels):
     """
-    Create a 3-panel visualization showing all mask candidates.
+    Create a panel visualization showing the mask candidates side by side.
 
     Args:
         image (np.ndarray): RGB image
-        masks (np.ndarray): Array of 3 masks (3, H, W)
-        scores (np.ndarray): Confidence scores
+        masks: Sequence of boolean masks (H, W)
+        labels: One caption per mask — either a ready-made string describing the
+            candidate, or a bare confidence score.
 
     Returns:
-        np.ndarray: Combined 3-panel image
+        np.ndarray: Combined panel image
     """
     num_masks = len(masks)
 
@@ -167,14 +167,20 @@ def visualize_three_masks(image, masks, scores):
     if num_masks == 1:
         axes = [axes]
 
-    for idx, (mask, score) in enumerate(zip(masks, scores)):
+    for idx, (mask, label) in enumerate(zip(masks, labels)):
         ax = axes[idx]
 
         # Create overlay
         overlay = create_mask_overlay(image, mask, color=(255, 0, 0), alpha=0.5)
 
+        # Labels may be pre-formatted strings or bare confidence scores.
+        if isinstance(label, str):
+            title = label if label.lower().startswith("option") else f"Mask {idx + 1}\n{label}"
+        else:
+            title = f"Mask {idx + 1}\nScore: {label:.3f}"
+
         ax.imshow(overlay)
-        ax.set_title(f"Mask {idx + 1}\nScore: {score:.3f}", fontsize=14, fontweight='bold')
+        ax.set_title(title, fontsize=13, fontweight='bold')
         ax.axis('off')
 
     plt.tight_layout()
@@ -270,7 +276,7 @@ def visualize_scale_verification(image, scale_info, databar_info=None):
             info_lines.append(f"Source: {source}")
         info_lines.append(f"Confidence: {confidence.upper()}")
     elif method == 'ocr':
-        info_lines.append(f"Source: OCR")
+        info_lines.append("Source: OCR")
         ocr_text = scale_info.get('ocr_text', '')
         if ocr_text:
             info_lines.append(f"Read: \"{ocr_text}\"")

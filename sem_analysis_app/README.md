@@ -96,7 +96,7 @@ curl -O https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
 ### Launch the Application
 
 ```bash
-python sem_analysis_app.py
+python -m sem_analysis_app        # run from the repository root
 ```
 
 Or use the convenience scripts:
@@ -147,15 +147,25 @@ The application will start on `http://127.0.0.1:7860`
 
 ```
 sem_analysis_app/
-├── sem_analysis_app.py     # Main Gradio application
-├── visualization.py        # Visualization helper functions
-├── requirements.txt        # Python dependencies
+├── __main__.py            # Entry point: python -m sem_analysis_app
+├── ui.py                  # Tab layout and event wiring
+├── static/
+│   └── scale_canvas.js    # Interactive scale box + magnifier (client-side)
+├── state.py               # Shared AppState instance
+├── callbacks/             # Event handlers, one module per tab
+│   ├── setup.py           #   SAM init, image loading, session resume
+│   ├── gallery.py         #   Thumbnails and image selection
+│   ├── scale_tab.py       #   Scale tab: the three calibration tiers
+│   ├── scale.py           #   Legacy in-Processing scale controls
+│   ├── segmentation.py    #   SAM segmentation and first analysis
+│   ├── refinement.py      #   Add/delete/merge/point-refine
+│   ├── plots.py           #   Session histograms
+│   └── results.py         #   Save, summarise, export
+├── visualization.py       # Visualization helper functions
+├── requirements.txt       # Python dependencies
 ├── launch.sh              # macOS/Linux launch script
 ├── launch.bat             # Windows launch script
-├── README.md              # This file
-├── QUICKSTART.md          # Quick start guide
-├── USER_GUIDE.md          # Detailed user guide
-└── PROJECT_SUMMARY.md     # Project overview
+└── README.md              # This file
 ```
 
 ## Output Files

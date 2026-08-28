@@ -1,0 +1,28 @@
+# Data
+
+Put your SEM/TEM micrographs here. Image files in this directory are **not**
+tracked by git (see `data/.gitignore`) — only this README and directory
+structure are.
+
+## Suggested layout
+
+```
+data/
+├── raw/                 # untouched micrographs straight off the instrument
+│   └── <sample-id>/     # one folder per sample or deposition run
+├── processed/           # analysis outputs (CSV + provenance sidecars)
+└── figures/             # publication figures
+```
+
+Keeping one folder per sample matters because the app loads *all* images in a
+folder when you select any image from it.
+
+## Formats
+
+`.tif`, `.tiff`, `.png`, `.jpg`, `.jpeg`.
+
+Prefer **original TIFFs straight from the microscope**. The scale detector can
+read pixel size directly from vendor TIFF metadata (FEI/Helios, Zeiss, JEOL,
+Hitachi, TESCAN), which is exact. Once an image has been converted to PNG/JPEG
+or cropped in another tool, that metadata is gone and scale has to come from
+OCR of the scale bar or from manual entry — both of which are less reliable.

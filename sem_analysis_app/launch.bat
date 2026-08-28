@@ -30,6 +30,7 @@ echo Press Ctrl+C to stop the application
 echo.
 
 REM Launch the app
-python sem_analysis_app.py
+cd ..
+python -m sem_analysis_app
 
 pause

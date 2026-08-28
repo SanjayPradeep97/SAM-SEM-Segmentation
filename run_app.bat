@@ -27,6 +27,6 @@ set PYTHONIOENCODING=utf-8
 REM Fix OpenMP library conflict (Intel MKL + PyTorch)
 set KMP_DUPLICATE_LIB_OK=TRUE
 
-python sem_analysis_app\sem_analysis_app.py
+python -m sem_analysis_app
 
 pause

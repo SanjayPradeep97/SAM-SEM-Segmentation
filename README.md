@@ -50,17 +50,78 @@ run_app.bat
 
 **macOS/Linux:**
 ```bash
-python sem_analysis_app/sem_analysis_app.py
+python -m sem_analysis_app
 ```
 
-Open your browser to `http://127.0.0.1:7860`
+Open your browser to `http://127.0.0.1:7860`. Use `--port` / `--host` to change
+where it listens.
 
-### 4. Use as Python Package
+### 4. Establishing Scale
+
+Scale gets its own tab, because every measurement is a pixel count multiplied by
+this one number. Three tiers, tried in order of trustworthiness:
+
+| Tier | Method | When it applies |
+| --- | --- | --- |
+| 1 | Pixel size read from the file's own metadata | Automatic on load. Exact — nothing to check |
+| 2 | Read the printed scale bar inside a box you draw | Runs automatically first; drag the box if it got it wrong |
+| 3 | Click both ends of the bar and type its length | When the bar is unreadable. A magnifier follows the cursor so you land on the exact pixel |
+
+Tier 2's box is manipulated directly on the image: drag anywhere to draw one,
+drag a corner to resize, drag the middle to move. Tier 3 shows a 7x loupe with a
+crosshair marking precisely which pixel a click will land on.
+
+A tier-2 reading is marked unconfirmed until you press **Confirm scale**; tier 1
+and tier 3 are trusted outright, since neither involves a machine reading a
+glyph. The result is shown as "X nm/px · how it was obtained", and it is what the
+Processing tab and the results CSV use. Nothing downstream re-detects scale or
+overrides what you set here.
+
+Calibration needs only OCR, so you can sort out scale before loading a SAM
+checkpoint.
+
+### 5. Batch Analysis Without the GUI
+
+For a dataset you intend to publish, run the pipeline headless. Every run writes
+a `run.json` recording the image hashes, model and checkpoint hash, the scale and
+how it was obtained, all parameters, library versions and the git revision — so a
+result can be traced back to exactly what produced it.
+
+```bash
+sem-analyze data/raw/sample-a -o data/processed/sample-a --clear-edges
+```
+
+Outputs: `particles.csv` (one row per particle), `per_image_summary.csv`,
+`size_distribution.png/.pdf` at 300 dpi, and `run.json`.
+
+Useful flags:
+
+| Flag | Effect |
+| --- | --- |
+| `--scale-nm-per-px X` | Fix the scale instead of detecting it per image |
+| `--scale-method metadata\|ocr\|auto` | How to establish scale (default `auto`) |
+| `--clear-edges` | Drop particles touching the frame; they are only partly imaged |
+| `--min-size N` | Ignore particles below N pixels (default 30) |
+| `--crop-percent P` | Override databar removal (default: measure it) |
+| `--model-type vit_b` | Faster, lower quality than the default `vit_h` |
+
+Note that batch mode uses the automatic pipeline only — no interactive
+refinement — and picks its mask candidate by heuristic. The chosen mask and the
+rejected candidates are recorded in `run.json`.
+
+### 6. Use as Python Package
 
 ```python
 from sem_particle_analysis import SAMModel, ParticleAnalyzer
 
 # Your code here
+```
+
+### 7. Run the Tests
+
+```bash
+pytest                      # everything
+pytest -m "not slow"        # skip tests needing model weights or OCR
 ```
 
 ---
@@ -79,6 +140,20 @@ A beautiful, production-ready web interface with:
 - **📈 Results Management**: CSV export, duplicate removal, row deletion
 - **↩️ Undo/Redo**: Click-level undo for refinement operations
 - **🎯 Advanced Features**: Edge particle removal, particle number toggle, size filtering
+
+Module layout:
+
+```
+sem_analysis_app/
+├── __main__.py       entry point (python -m sem_analysis_app)
+├── ui.py             tab layout and event wiring
+├── state.py          shared application state
+├── callbacks/        event handlers, one module per tab
+└── visualization.py  overlays and figures
+```
+
+The app keeps a single process-wide state object, so it is built for one analyst
+at a time; two browser tabs pointed at the same server share one session.
 
 See [`sem_analysis_app/README.md`](sem_analysis_app/README.md) for detailed usage instructions.
 
