@@ -8,6 +8,24 @@ import numpy as np
 from skimage import measure, morphology
 from skimage.segmentation import clear_border
 
+from ._compat import binary_closing, binary_opening, remove_objects_smaller_than
+
+
+def equivalent_diameter(region):
+    """
+    Diameter of the circle with the same area as ``region``, in pixels.
+
+    scikit-image 0.26 deprecated ``equivalent_diameter`` in favour of
+    ``equivalent_diameter_area`` and will drop it in 2.0. The two return the same
+    number, so prefer the new spelling and fall back to the old one — this is the
+    measurement every reported size derives from, and it should not start warning
+    or break on a routine scikit-image upgrade.
+    """
+    try:
+        return region.equivalent_diameter_area
+    except AttributeError:  # scikit-image < 0.26
+        return region.equivalent_diameter
+
 
 class ParticleAnalyzer:
     """
@@ -63,8 +81,8 @@ class ParticleAnalyzer:
         Returns:
             np.ndarray: Cleaned boolean mask
         """
-        cleaned = morphology.binary_opening(mask.astype(bool), morphology.disk(1))
-        return morphology.remove_small_objects(cleaned, min_size=min_size)
+        cleaned = binary_opening(mask.astype(bool), morphology.disk(1))
+        return remove_objects_smaller_than(cleaned, min_size)
 
     def _relabel_and_filter(self):
         """
@@ -257,7 +275,7 @@ class ParticleAnalyzer:
 
         # Extract measurements in pixels
         areas_px = [r.area for r in self.regions]
-        diams_px = [r.equivalent_diameter for r in self.regions]
+        diams_px = [equivalent_diameter(r) for r in self.regions]
         centroids = [(r.centroid[1], r.centroid[0]) for r in self.regions]  # (x, y)
         bboxes = [r.bbox for r in self.regions]
 
@@ -278,6 +296,11 @@ class ParticleAnalyzer:
             'centroids': centroids,
             'bboxes': bboxes,
             'unit': unit,
+            # ResultsManager writes this to the nm_per_px column so a nm value can
+            # be traced back to the scale that produced it. The no-particles
+            # branch above always returned it; omitting it here left the column
+            # empty on precisely the rows that have measurements in them.
+            'nm_per_px': self.conversion,
             'areas_px': areas_px,
             'diameters_px': diams_px
         }
@@ -325,10 +348,7 @@ class ParticleAnalyzer:
         merge_mask = np.isin(self.labeled_mask, labels_to_merge)
 
         # Apply morphological closing to bridge gaps
-        merge_mask_closed = morphology.binary_closing(
-            merge_mask.astype(bool),
-            morphology.disk(1)
-        )
+        merge_mask_closed = binary_closing(merge_mask.astype(bool), morphology.disk(1))
 
         # Update main mask
         self.mask = (self.mask & (~merge_mask)) | merge_mask_closed

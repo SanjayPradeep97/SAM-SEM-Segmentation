@@ -7,6 +7,8 @@ Handles SAM-based particle segmentation with mask generation and selection.
 import numpy as np
 from skimage import morphology
 
+from ._compat import remove_objects_smaller_than
+
 
 class ParticleSegmenter:
     """
@@ -283,7 +285,7 @@ class ParticleSegmenter:
         refined = masks_out[best_idx].astype(bool)
 
         # Clean up (use smaller default for SAM refinement to preserve detail)
-        refined = morphology.remove_small_objects(refined, min_size=10)
+        refined = remove_objects_smaller_than(refined, 10)
 
         return refined, scores[best_idx]
 
