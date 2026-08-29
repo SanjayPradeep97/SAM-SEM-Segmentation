@@ -245,9 +245,14 @@ class ScaleDetector:
             print("OCR reader initialized")
         return self._reader
 
+    # Where the OCR fallback used to look, and still does when a caller names a
+    # region explicitly.
+    DEFAULT_OCR_REGION = dict(region_x=0.75, region_y=0.95,
+                              region_width=0.5, region_height=0.08)
+
     def detect_scale(self, image, file_path=None, method='auto',
-                     region_x=0.75, region_y=0.95,
-                     region_width=0.5, region_height=0.08,
+                     region_x=None, region_y=None,
+                     region_width=None, region_height=None,
                      polarity='auto', threshold=200):
         """
         Detect scale using the best available method.
@@ -263,10 +268,13 @@ class ScaleDetector:
                 - 'auto': Try both, compare confidence, cross-check (default)
                 - 'metadata': Only use metadata extraction (raises if fails)
                 - 'ocr': Only use OCR detection
-            region_x (float): Horizontal center of OCR search region (0-1)
-            region_y (float): Vertical center of OCR search region (0-1)
-            region_width (float): Width fraction for OCR search region (0-1)
-            region_height (float): Height fraction for OCR search region (0-1)
+            region_x (float, optional): Horizontal center of OCR search region (0-1)
+            region_y (float, optional): Vertical center of OCR search region (0-1)
+            region_width (float, optional): Width fraction for OCR search region (0-1)
+            region_height (float, optional): Height fraction for OCR search region (0-1)
+                Leave all four unset — the usual case — to search every position a
+                scale bar is normally printed in. Naming any of them restricts the
+                search to that one region instead.
             polarity (str): Scale bar polarity - 'auto', 'bright', or 'dark'
             threshold (int): Binary threshold for OCR (0-255)
 
@@ -314,15 +322,25 @@ class ScaleDetector:
         if method in ('auto', 'ocr'):
             try:
                 logger.info("Attempting OCR-based scale bar detection")
-                ocr_result = self.detect_scale_bar(
-                    image,
-                    region_x=region_x,
-                    region_y=region_y,
-                    region_width=region_width,
-                    region_height=region_height,
-                    polarity=polarity,
-                    threshold=threshold
-                )
+                region = {k: v for k, v in (
+                    ('region_x', region_x), ('region_y', region_y),
+                    ('region_width', region_width), ('region_height', region_height),
+                ) if v is not None}
+
+                if region:
+                    # An explicitly named region is used as given.
+                    ocr_result = self.detect_scale_bar(
+                        image, **{**self.DEFAULT_OCR_REGION, **region},
+                        polarity=polarity, threshold=threshold,
+                    )
+                else:
+                    # Nothing named, so look in all the usual places rather than
+                    # only the bottom-right. That default suits an SEM databar and
+                    # misses a TEM bar burned into the bottom-left entirely, which
+                    # left every TEM frame in a batch run measured in pixels while
+                    # the web app — which already swept — read them fine.
+                    ocr_result = self.detect_scale_bar_anywhere(
+                        image, polarity=polarity, threshold=threshold)
                 ocr_result['method'] = 'ocr'
                 ocr_result['confidence'] = 'medium'  # OCR is always medium confidence
                 self.last_ocr_result = ocr_result
