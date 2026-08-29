@@ -11,7 +11,7 @@ Marked slow: EasyOCR downloads and loads detection models on first use.
 import numpy as np
 import pytest
 
-from synthetic import databar_region, make_micrograph
+from synthetic import databar_region, make_burnin_micrograph, make_micrograph
 
 pytestmark = pytest.mark.slow
 
@@ -80,3 +80,44 @@ class TestStandardValueClassification:
         assert not scale_detector._is_standard_scale_value(nanometres)
 
 
+
+
+class TestBurnedInBar:
+    """
+    A TEM-style frame: light field, no databar, solid dark bar inside the image.
+
+    On the real set this layout was read with the wrong polarity on most frames,
+    giving scale errors up to 2.6x with no error raised.
+    """
+
+    def test_reads_a_dark_bar_on_a_light_field(self, scale_detector):
+        image, truth = make_burnin_micrograph(bar_length_px=128, scale_text="1 um",
+                                              scale_nm=1000.0)
+        result = scale_detector.detect_scale_bar_anywhere(image)
+        assert result["polarity_used"] == "dark"
+        assert result["pixel_length"] == pytest.approx(truth["bar_length_px"], abs=6)
+        assert result["conversion"] == pytest.approx(truth["nm_per_px"], rel=0.06)
+
+    def test_measures_the_bar_not_the_field(self, scale_detector):
+        # The failure mode was a long ragged run through the noisy background
+        # winning on width. Its length bore no relation to the bar's.
+        image, truth = make_burnin_micrograph(bar_length_px=96, noise=14.0,
+                                              scale_text="500 nm", scale_nm=500.0)
+        result = scale_detector.detect_scale_bar_anywhere(image)
+        assert result["pixel_length"] == pytest.approx(96, abs=8)
+
+    @pytest.mark.parametrize("length,text,nanometres",
+                             [(104, "0.5 um", 500.0), (223, "5 um", 5000.0),
+                              (155, "2 um", 2000.0)])
+    def test_recovers_various_bars(self, scale_detector, length, text, nanometres):
+        image, truth = make_burnin_micrograph(bar_length_px=length, scale_text=text,
+                                              scale_nm=nanometres)
+        result = scale_detector.detect_scale_bar_anywhere(image)
+        assert result["conversion"] == pytest.approx(truth["nm_per_px"], rel=0.08)
+
+    def test_a_clear_reading_is_not_flagged(self, scale_detector):
+        # Warning on every polarity disagreement made a correct reading lose to
+        # an unflagged wrong one, because the region sweep prefers unflagged.
+        image, _ = make_burnin_micrograph(bar_length_px=128, scale_text="1 um",
+                                          scale_nm=1000.0)
+        assert not scale_detector.detect_scale_bar_anywhere(image).get("warning")

@@ -142,3 +142,77 @@ def make_disk_mask(shape=(400, 400), centers_radii=((100, 100, 30), (300, 250, 4
         mask[(xx - cx) ** 2 + (yy - cy) ** 2 <= r ** 2] = 1
         radii.append(r)
     return mask, radii
+
+
+def make_burnin_micrograph(
+    width=1024,
+    height=1024,
+    background_gray=200,
+    noise=9.0,
+    bar_gray=0,
+    bar_length_px=128,
+    bar_thickness=12,
+    bar_left=33,
+    bar_bottom_margin=28,
+    scale_text="1 µm",
+    scale_nm=1000.0,
+    text_size=44,
+    seed=0,
+):
+    """
+    A TEM-style frame with the scale bar burned into the image itself.
+
+    Modelled on the JEOL exports in use: a light, noisy field with **no databar**
+    and a solid dark bar plus its label sitting in the bottom-left of the
+    micrograph. This is the layout that exposed two real defects — the scale bar
+    detector preferring a ragged bright run over the solid dark bar, and the
+    databar detector claiming a bar where there was none.
+
+    Returns:
+        tuple: (rgb_image, truth) with ``nm_per_px``, ``bar_length_px``,
+        ``scale_nm``, ``bar_box`` as (x0, y0, w, h).
+    """
+    rng = np.random.default_rng(seed)
+    field = np.clip(rng.normal(background_gray, noise, size=(height, width)), 0, 255)
+    pil = Image.fromarray(field.astype(np.uint8)).convert("RGB")
+    draw = ImageDraw.Draw(pil)
+
+    fill = (bar_gray, bar_gray, bar_gray)
+    bar_top = height - bar_bottom_margin - bar_thickness
+    draw.rectangle(
+        [bar_left, bar_top, bar_left + bar_length_px, bar_top + bar_thickness],
+        fill=fill,
+    )
+    font = _load_font(text_size)
+    draw.text((bar_left, bar_top - text_size - 6), scale_text, fill=fill, font=font)
+
+    truth = {
+        "nm_per_px": scale_nm / bar_length_px,
+        "bar_length_px": bar_length_px,
+        "scale_nm": scale_nm,
+        "bar_box": (bar_left, bar_top, bar_length_px, bar_thickness),
+        "height": height,
+        "width": width,
+    }
+    return np.array(pil), truth
+
+
+def make_grid_bar_frame(width=1024, height=1024, background_gray=205, noise=9.0,
+                        seed=1):
+    """
+    A TEM frame whose bottom corner is blocked by the specimen grid bar.
+
+    The dark wedge is uniform enough, and contrasts strongly enough with the
+    film, to look like a databar to any test based on row statistics alone — but
+    it is micrograph, and cropping it throws away data. Its top edge is diagonal,
+    which is what actually distinguishes it from a drawn bar.
+    """
+    rng = np.random.default_rng(seed)
+    field = np.clip(rng.normal(background_gray, noise, size=(height, width)), 0, 255)
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    # A diagonal band across the bottom-left, as a grid bar appears.
+    wedge = yy > (height * 0.80 + 0.45 * xx)
+    field[wedge] = rng.normal(4, 2.5, size=int(wedge.sum())).clip(0, 255)
+
+    return np.stack([field.astype(np.uint8)] * 3, axis=-1)
