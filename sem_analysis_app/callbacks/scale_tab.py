@@ -66,6 +66,74 @@ def _image_payload(image, box=None):
     return json.dumps(payload)
 
 
+def _raw_metadata():
+    """TIFF tags for the current image, or None. Never fatal."""
+    if not state.image_paths or state.current_index >= len(state.image_paths):
+        return None
+    try:
+        from sem_particle_analysis.utils import extract_tiff_metadata
+
+        return extract_tiff_metadata(str(state.image_paths[state.current_index]))
+    except Exception:
+        return None
+
+
+def _bar_region(calibration):
+    """
+    Where the scale bar sits in the frame, as (x0, y0, w, h), or None.
+
+    Only meaningful when the bar was found inside the image itself.
+    """
+    extra = getattr(calibration, "extra", None) or {}
+    region = extra.get("region")
+    if region and len(region) == 4:
+        return tuple(int(v) for v in region)
+    box = extra.get("box")
+    if box and len(box) == 4:
+        x0, y0, x1, y1 = (int(v) for v in box)
+        return (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+    return None
+
+
+def _apply_frame_geometry(calibration):
+    """
+    Decide which part of the frame gets segmented, and what to ignore in it.
+
+    Two situations, and confusing them costs real data either way:
+
+    - An SEM frame carries a databar below the micrograph. It has to be cropped
+      off, or its text and rules are segmented and measured as particles.
+    - A TEM frame has no databar; the scale bar is burned into the micrograph
+      itself. There is nothing to crop — trimming a fixed percentage would throw
+      away image — so the bar's own patch is excluded from segmentation instead.
+
+    Deciding this here means every tier gets it, rather than only the paths that
+    happen to remember.
+    """
+    image = state.current_image
+    if image is None:
+        return
+
+    try:
+        databar = _detector().detect_databar(image, _raw_metadata()) or {}
+    except Exception:
+        databar = {}
+
+    height = image.shape[0]
+    bar_height = int(databar.get("databar_height") or 0)
+
+    if databar.get("has_databar") and 0 < bar_height < height:
+        state.cropped_image = image[: height - bar_height].copy()
+        state.crop_percent = round(100 * bar_height / height, 2)
+        # The printed bar went with the databar, so there is nothing left to
+        # exclude inside the micrograph.
+        state.scale_bar_region = None
+    else:
+        state.cropped_image = image
+        state.crop_percent = 0.0
+        state.scale_bar_region = _bar_region(calibration)
+
+
 def _adopt(calibration):
     """
     Make a calibration the authoritative scale for the current image.
@@ -75,10 +143,7 @@ def _adopt(calibration):
     """
     state.scale_calibration = calibration
     state.scale_info = calibration.to_dict()
-    if state.cropped_image is None and state.current_image is not None:
-        # TEM frames have no databar to trim; the printed bar is inside the
-        # image and is excluded from segmentation instead of cropped away.
-        state.cropped_image = state.current_image
+    _apply_frame_geometry(calibration)
     return calibration
 
 
@@ -155,6 +220,10 @@ def _try_automatic_bar(payload, tier1_message):
         detail=f"found automatically in the {found.get('region_name', 'image')} "
                f"corner: “{found.get('ocr_text', '').strip()}”",
         warning=found.get("warning"),
+        # Recorded so that, on a frame with no databar to crop, segmentation can
+        # exclude the patch the bar occupies instead of measuring it.
+        extra={"region": found.get("region"),
+               "region_name": found.get("region_name")},
     )
     _adopt(calibration)
 

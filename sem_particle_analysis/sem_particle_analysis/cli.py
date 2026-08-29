@@ -104,13 +104,33 @@ def resolve_scale(detector, image, image_path, args):
         return None, {"method": "failed", "nm_per_px": None, "error": str(exc)}
 
 
-def crop_databar(detector, image, args):
+def read_metadata(image_path):
+    """
+    Raw TIFF tags for ``image_path``, or None if there are none to read.
+
+    Only used to hand the databar detector the instrument's own answer; a
+    failure here is never fatal.
+    """
+    try:
+        from .utils import extract_tiff_metadata
+
+        return extract_tiff_metadata(str(image_path))
+    except Exception:
+        return None
+
+
+def crop_databar(detector, image, args, metadata=None):
     """
     Remove the instrument databar from the bottom of the frame.
 
     With --crop-percent left at auto, the databar's height is measured. A fixed
     percentage is fragile in both directions: too small leaves a strip whose text
     and borders segment into spurious particles, too large eats real image area.
+
+    Args:
+        metadata: Raw TIFF metadata, when available. FEI records the scan height
+            in tag 34682, which gives the databar height exactly — worth far more
+            than measuring it off the pixels.
 
     Returns:
         tuple: (cropped_image, info_dict)
@@ -125,7 +145,7 @@ def crop_databar(detector, image, args):
                          "rows_removed": height - cropped.shape[0]}
 
     try:
-        databar = detector.detect_databar(image)
+        databar = detector.detect_databar(image, metadata=metadata)
     except Exception:
         databar = None
 
@@ -163,7 +183,9 @@ def analyze_image(image_path, sam_model, detector, args):
     # Trim the databar so it can't be segmented as a particle. Measuring its
     # height beats a fixed percentage, which either leaves a strip behind (and
     # the leftover text fragments into "particles") or eats into the micrograph.
-    working, crop_info = crop_databar(detector, image, args)
+    # The instrument's own scan height, when it recorded one, beats measuring.
+    working, crop_info = crop_databar(detector, image, args,
+                                      metadata=read_metadata(image_path))
 
     segmenter = ParticleSegmenter(sam_model)
     masks, scores = segmenter.segment_image(working, multimask_output=True)

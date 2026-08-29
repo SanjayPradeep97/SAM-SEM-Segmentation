@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from sem_particle_analysis import ScaleDetector
-from synthetic import make_micrograph
+from synthetic import make_burnin_micrograph, make_grid_bar_frame, make_micrograph
 
 
 @pytest.fixture(scope="module")
@@ -189,3 +189,36 @@ class TestCropDatabarPolicy:
         cropped, info = cli.crop_databar(detector, image, Args())
         assert info["method"] == "none"
         assert cropped.shape[0] == image.shape[0]
+
+
+class TestCasesFromTheRealInstruments:
+    """
+    Failures seen on the NIOSH set, kept so they cannot come back.
+
+    Both were silent: one cropped away part of the micrograph, the other cropped
+    a frame that had nothing to crop.
+    """
+
+    def test_a_wide_rule_inside_the_bar_does_not_end_it(self, detector):
+        # FEI draws the scale bar across nearly half the databar's width, so the
+        # row carrying it looks nothing like the background. Stopping there
+        # reported a 96px databar as 35px and left the rest to be segmented.
+        image, truth = make_micrograph(
+            width=1536, image_height=1024, databar_height=96,
+            bar_length_px=700,        # ~46% of the width, as FEI draws it
+            bar_left=760, scale_text="1 mm", scale_nm=1_000_000.0,
+        )
+        found = detector.detect_databar(image)
+        assert found["has_databar"] is True
+        assert found["databar_height"] == truth["databar_height"]
+
+    def test_a_grid_bar_across_the_corner_is_not_a_databar(self, detector):
+        # A TEM specimen grid bar is dark, large and contrasts strongly with the
+        # film, but it is micrograph. Cropping it discards data — and on the real
+        # set it would have removed up to 13% of nine frames.
+        assert detector.detect_databar(make_grid_bar_frame())["has_databar"] is False
+
+    def test_a_burned_in_scale_bar_frame_has_no_databar(self, detector):
+        # TEM frames carry the bar inside the image; there is no strip to trim.
+        image, _ = make_burnin_micrograph()
+        assert detector.detect_databar(image)["has_databar"] is False
