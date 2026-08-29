@@ -104,13 +104,33 @@ def resolve_scale(detector, image, image_path, args):
         return None, {"method": "failed", "nm_per_px": None, "error": str(exc)}
 
 
-def crop_databar(detector, image, args):
+def read_metadata(image_path):
+    """
+    Raw TIFF tags for ``image_path``, or None if there are none to read.
+
+    Only used to hand the databar detector the instrument's own answer; a
+    failure here is never fatal.
+    """
+    try:
+        from .utils import extract_tiff_metadata
+
+        return extract_tiff_metadata(str(image_path))
+    except Exception:
+        return None
+
+
+def crop_databar(detector, image, args, metadata=None):
     """
     Remove the instrument databar from the bottom of the frame.
 
     With --crop-percent left at auto, the databar's height is measured. A fixed
     percentage is fragile in both directions: too small leaves a strip whose text
     and borders segment into spurious particles, too large eats real image area.
+
+    Args:
+        metadata: Raw TIFF metadata, when available. FEI records the scan height
+            in tag 34682, which gives the databar height exactly — worth far more
+            than measuring it off the pixels.
 
     Returns:
         tuple: (cropped_image, info_dict)
@@ -125,11 +145,11 @@ def crop_databar(detector, image, args):
                          "rows_removed": height - cropped.shape[0]}
 
     try:
-        databar = detector.detect_databar(image)
+        databar = detector.detect_databar(image, metadata=metadata)
     except Exception:
-        databar = {}
+        databar = None
 
-    if databar.get("has_databar") and databar.get("databar_height"):
+    if databar and databar.get("has_databar") and databar.get("databar_height"):
         keep = height - int(databar["databar_height"])
         if 0 < keep < height:
             return image[:keep].copy(), {
@@ -138,6 +158,17 @@ def crop_databar(detector, image, args):
                 "fraction": round(databar.get("databar_fraction", 0.0), 4),
             }
 
+    if databar is not None:
+        # Detection ran and found no databar. That is the normal case for TEM
+        # frames, where the scale bar is burned into the micrograph itself and
+        # there is no strip below it — trimming a fixed percentage would throw
+        # away real image. Keep the frame; the bar is excluded from segmentation
+        # rather than cropped.
+        return image, {"method": "none", "rows_removed": 0}
+
+    # Detection itself failed, so nothing is known either way; fall back to the
+    # historical fixed percentage rather than risk leaving a databar in frame,
+    # whose text and rules segment into spurious particles.
     cropped = detector.crop_scale_bar(image, crop_percent=DEFAULT_CROP_PERCENT)
     return cropped, {"method": "fallback-percent", "percent": DEFAULT_CROP_PERCENT,
                      "rows_removed": height - cropped.shape[0]}
@@ -152,7 +183,9 @@ def analyze_image(image_path, sam_model, detector, args):
     # Trim the databar so it can't be segmented as a particle. Measuring its
     # height beats a fixed percentage, which either leaves a strip behind (and
     # the leftover text fragments into "particles") or eats into the micrograph.
-    working, crop_info = crop_databar(detector, image, args)
+    # The instrument's own scan height, when it recorded one, beats measuring.
+    working, crop_info = crop_databar(detector, image, args,
+                                      metadata=read_metadata(image_path))
 
     segmenter = ParticleSegmenter(sam_model)
     masks, scores = segmenter.segment_image(working, multimask_output=True)

@@ -1,11 +1,60 @@
+import getpass
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 # Test helpers live alongside the tests rather than in the installed package.
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+def _ensure_usable_temp_root():
+    """
+    Make sure pytest has somewhere writable to put ``tmp_path`` directories.
+
+    pytest creates per-run temp directories under ``<TEMP>/pytest-of-<user>``. On
+    Windows that directory is sometimes left behind by a run under a different or
+    elevated identity, with ACLs the current user cannot read, rename or delete
+    without elevation. Every test taking ``tmp_path`` then errors at setup with
+    ``PermissionError: [WinError 5]``, and no amount of cleaning the working tree
+    helps.
+
+    Rather than require a manual, elevated fix before the suite can run at all,
+    probe the default root and redirect to a fresh one if it is unusable.
+    ``PYTEST_DEBUG_TEMPROOT`` names the *parent*; pytest creates its own
+    ``pytest-of-<user>`` inside it.
+
+    Runs at conftest import, which is before the temp factory first resolves a
+    path. An explicit ``PYTEST_DEBUG_TEMPROOT`` is always left alone.
+    """
+    if os.environ.get("PYTEST_DEBUG_TEMPROOT"):
+        return
+
+    try:
+        user = getpass.getuser()
+    except Exception:  # pragma: no cover - getuser can fail on odd systems
+        return
+
+    root = Path(tempfile.gettempdir()) / f"pytest-of-{user}"
+    if not root.exists():
+        return
+
+    probe = root / ".write-probe"
+    try:
+        probe.mkdir(exist_ok=True)
+        probe.rmdir()
+    except OSError:
+        fallback = Path(tempfile.gettempdir()) / "pytest-temproot"
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+        except OSError:  # pragma: no cover - nothing writable anywhere
+            return
+        os.environ["PYTEST_DEBUG_TEMPROOT"] = str(fallback)
+
+
+_ensure_usable_temp_root()
 
 # Candidate locations for SAM weights, in preference order. sam_weights/ is the
 # documented location; the others cover a checkout that hasn't run the downloader.

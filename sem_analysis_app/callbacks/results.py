@@ -5,6 +5,8 @@ import os
 import gradio as gr
 import numpy as np
 
+from sem_particle_analysis.data_manager import parse_measurement_list
+
 from ..state import state
 from .gallery import create_image_gallery
 
@@ -68,8 +70,7 @@ def get_session_summary():
         # Collect all particle diameters from all images
         all_diameters = []
         for idx, row in results_df.iterrows():
-            diams_nm = eval(row['equiv_diameters_nm']) if row['equiv_diameters_nm'] != '[]' else []
-            all_diameters.extend(diams_nm)
+            all_diameters.extend(parse_measurement_list(row['equiv_diameters_nm']))
 
         if len(all_diameters) > 0:
             mean_diam = np.mean(all_diameters) / 1000  # Convert to μm

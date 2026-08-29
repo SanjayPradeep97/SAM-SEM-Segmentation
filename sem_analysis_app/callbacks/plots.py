@@ -2,6 +2,8 @@
 Plotting tab: session-wide histograms.
 """
 
+from sem_particle_analysis.data_manager import parse_measurement_list
+
 from ..state import state
 
 def update_histogram_plots():
@@ -22,11 +24,8 @@ def update_histogram_plots():
 
         for idx, row in results_df.iterrows():
             # Parse the string lists back to arrays
-            areas_nm2 = eval(row['particle_areas_nm2']) if row['particle_areas_nm2'] != '[]' else []
-            diams_nm = eval(row['equiv_diameters_nm']) if row['equiv_diameters_nm'] != '[]' else []
-
-            all_areas.extend(areas_nm2)
-            all_diameters.extend(diams_nm)
+            all_areas.extend(parse_measurement_list(row['particle_areas_nm2']))
+            all_diameters.extend(parse_measurement_list(row['equiv_diameters_nm']))
 
         total_particles = len(all_areas)
 

@@ -15,11 +15,20 @@ import re
 import logging
 import cv2
 import numpy as np
-import easyocr
 
 from .utils import extract_tiff_metadata
 
 logger = logging.getLogger(__name__)
+
+
+class OCRUnavailableError(ValueError):
+    """
+    Raised when a scale bar must be read but EasyOCR is not installed.
+
+    Subclasses ValueError so that callers already handling a failed OCR attempt —
+    notably ``detect_scale(method='auto')``, which falls back to metadata — treat
+    a missing library as just another way for OCR not to produce an answer.
+    """
 
 
 class ScaleDetector:
@@ -73,6 +82,19 @@ class ScaleDetector:
     MAX_BAR_THICKNESS_FRAC = 0.02
     MIN_BAR_THICKNESS_PX = 6
 
+    # A scale bar is drawn solid, so its pixels fill its bounding box. Thresholded
+    # background noise, opened with a wide kernel, also yields long thin
+    # components — but ragged ones. Measured on the NIOSH TEM set, the true bar
+    # fills 1.00 of its box while the spurious runs that were beating it on width
+    # fill 0.31–0.67.
+    MIN_BAR_FILL = 0.8
+
+    # The losing polarity has to have found something this close in size to the
+    # winner before the reading counts as genuinely ambiguous. Both polarities
+    # nearly always find *something*, so a lower bar here floods every frame with
+    # warnings and hides the readings that really are doubtful.
+    AMBIGUOUS_POLARITY_AREA_RATIO = 0.6
+
     # Plausible physical length for a printed scale bar, in nm: from atomic
     # resolution (1 Å) up to 1 mm. A parsed value outside this came from a
     # misread unit, and acting on it would rescale every measurement.
@@ -83,6 +105,27 @@ class ScaleDetector:
     # always a misread digit, and a misread digit is a multiplicative error in
     # every measurement, so such results are flagged for manual confirmation.
     STANDARD_MANTISSAS = (1.0, 1.5, 2.0, 2.5, 3.0, 5.0)
+
+    # Databar geometry. Instruments put the acquisition information in a solid
+    # strip below the micrograph; these bound what counts as one.
+    DATABAR_MAX_FRACTION = 0.15      # tallest acceptable bar, as a share of height
+    DATABAR_SCAN_FRACTION = 0.25     # scan past that, so "no edge" is detectable
+    DATABAR_MEDIAN_TOLERANCE = 8.0   # grey levels the background may drift by
+    DATABAR_MIN_HEIGHT_PX = 10
+    DATABAR_MIN_SEPARATION = 12.0    # a bar must differ from the frame above it
+    # A databar contains rules — the scale bar itself, panel dividers — wide
+    # enough to move a whole row's median. FEI draws a scale bar spanning nearly
+    # half the frame width, so the row carrying it looks nothing like the
+    # background. Such a row must not be mistaken for the top edge, so allow a
+    # run of this many disagreeing rows before concluding the bar has ended.
+    DATABAR_MAX_RULE_THICKNESS_PX = 6
+    # A databar is drawn, so it starts with a straight full-width edge: its top
+    # row is flat background. A dark region belonging to the micrograph — a TEM
+    # grid bar cutting across the corner, a vignette — has no such row, because
+    # wherever it is cut the row crosses both dark and bright areas. Measured on
+    # the NIOSH set, real FEI databars give a top-row standard deviation of 5.9
+    # and grid bars 87–111, so this sits well clear of both.
+    DATABAR_EDGE_ROW_STD = 25.0
 
     # Registry for custom tag parsers (extensibility for new microscope formats)
     # Format: {tag_code: [(parser_func, manufacturer_name), ...]}
@@ -163,19 +206,53 @@ class ScaleDetector:
         """
         Initialize the scale bar detector.
 
+        The OCR reader is not built here. EasyOCR takes several seconds to load
+        its models and drags in a large dependency tree, and neither is needed to
+        read a pixel size out of TIFF metadata — which is the tier that succeeds
+        on most instrument exports. Constructing a detector is therefore free,
+        and OCR is paid for only by the images that actually need it.
+
         Args:
             use_gpu (bool): Whether to use GPU for OCR (default: False)
         """
-        print("Initializing OCR reader...")
-        self.reader = easyocr.Reader(['en'], gpu=use_gpu)
+        self.use_gpu = use_gpu
+        self._reader = None
         self.last_detection = None
         self.last_metadata_result = None
         self.last_ocr_result = None
-        print("OCR reader initialized")
+
+    @property
+    def reader(self):
+        """
+        The EasyOCR reader, built on first use.
+
+        Raises:
+            ScaleDetectionError: If EasyOCR is not installed. Raised here rather
+                than at import time so that metadata-based scale detection, the
+                analyzer and the segmenter all remain usable without it.
+        """
+        if self._reader is None:
+            try:
+                import easyocr
+            except ImportError as exc:  # pragma: no cover - depends on install
+                raise OCRUnavailableError(
+                    "Reading a printed scale bar needs EasyOCR, which is not "
+                    "installed. Install it with 'pip install easyocr', or use a "
+                    "scale from file metadata or entered by hand."
+                ) from exc
+            print("Initializing OCR reader...")
+            self._reader = easyocr.Reader(['en'], gpu=self.use_gpu)
+            print("OCR reader initialized")
+        return self._reader
+
+    # Where the OCR fallback used to look, and still does when a caller names a
+    # region explicitly.
+    DEFAULT_OCR_REGION = dict(region_x=0.75, region_y=0.95,
+                              region_width=0.5, region_height=0.08)
 
     def detect_scale(self, image, file_path=None, method='auto',
-                     region_x=0.75, region_y=0.95,
-                     region_width=0.5, region_height=0.08,
+                     region_x=None, region_y=None,
+                     region_width=None, region_height=None,
                      polarity='auto', threshold=200):
         """
         Detect scale using the best available method.
@@ -191,10 +268,13 @@ class ScaleDetector:
                 - 'auto': Try both, compare confidence, cross-check (default)
                 - 'metadata': Only use metadata extraction (raises if fails)
                 - 'ocr': Only use OCR detection
-            region_x (float): Horizontal center of OCR search region (0-1)
-            region_y (float): Vertical center of OCR search region (0-1)
-            region_width (float): Width fraction for OCR search region (0-1)
-            region_height (float): Height fraction for OCR search region (0-1)
+            region_x (float, optional): Horizontal center of OCR search region (0-1)
+            region_y (float, optional): Vertical center of OCR search region (0-1)
+            region_width (float, optional): Width fraction for OCR search region (0-1)
+            region_height (float, optional): Height fraction for OCR search region (0-1)
+                Leave all four unset — the usual case — to search every position a
+                scale bar is normally printed in. Naming any of them restricts the
+                search to that one region instead.
             polarity (str): Scale bar polarity - 'auto', 'bright', or 'dark'
             threshold (int): Binary threshold for OCR (0-255)
 
@@ -242,15 +322,25 @@ class ScaleDetector:
         if method in ('auto', 'ocr'):
             try:
                 logger.info("Attempting OCR-based scale bar detection")
-                ocr_result = self.detect_scale_bar(
-                    image,
-                    region_x=region_x,
-                    region_y=region_y,
-                    region_width=region_width,
-                    region_height=region_height,
-                    polarity=polarity,
-                    threshold=threshold
-                )
+                region = {k: v for k, v in (
+                    ('region_x', region_x), ('region_y', region_y),
+                    ('region_width', region_width), ('region_height', region_height),
+                ) if v is not None}
+
+                if region:
+                    # An explicitly named region is used as given.
+                    ocr_result = self.detect_scale_bar(
+                        image, **{**self.DEFAULT_OCR_REGION, **region},
+                        polarity=polarity, threshold=threshold,
+                    )
+                else:
+                    # Nothing named, so look in all the usual places rather than
+                    # only the bottom-right. That default suits an SEM databar and
+                    # misses a TEM bar burned into the bottom-left entirely, which
+                    # left every TEM frame in a batch run measured in pixels while
+                    # the web app — which already swept — read them fine.
+                    ocr_result = self.detect_scale_bar_anywhere(
+                        image, polarity=polarity, threshold=threshold)
                 ocr_result['method'] = 'ocr'
                 ocr_result['confidence'] = 'medium'  # OCR is always medium confidence
                 self.last_ocr_result = ocr_result
@@ -1045,15 +1135,17 @@ class ScaleDetector:
 
             line = self._find_scale_line_morphological(binary255, max_thickness=max_thickness)
             if line is not None:
-                leftmost, rightmost, row, spanned = line
-                length = rightmost - leftmost
-                candidates[pol] = length
+                leftmost, rightmost, row, spanned, area = line
+                candidates[pol] = {"length": rightmost - leftmost, "area": area}
                 # A bar with clear background on both sides always beats one that
-                # ran to the crop edge, regardless of which is longer.
+                # ran to the crop edge, regardless of size. Otherwise the larger
+                # solid rule wins: comparing the two polarities on width alone let
+                # a wide, ragged run through background beat the real bar, which
+                # is what put the wrong polarity on most of the TEM frames.
                 better = (
                     best_line is None
                     or (best_line[3] and not spanned)
-                    or (best_line[3] == spanned and length > (best_line[1] - best_line[0]))
+                    or (best_line[3] == spanned and area > best_line[4])
                 )
                 if better:
                     best_line = line
@@ -1066,7 +1158,7 @@ class ScaleDetector:
                 "Try adjusting the region position, polarity, or threshold."
             )
 
-        leftmost, rightmost, top_row, spanned_crop = best_line
+        leftmost, rightmost, top_row, spanned_crop, _bar_area = best_line
         pixel_length = rightmost - leftmost
 
         if pixel_length < 5:
@@ -1136,13 +1228,24 @@ class ScaleDetector:
                 f"so there is background on both sides of the bar, then re-detect."
             )
         elif len(candidates) > 1:
-            lo, hi = min(candidates.values()), max(candidates.values())
-            if hi > lo * 1.1:
+            # Genuine ambiguity means the polarity that lost also found something
+            # bar-like of comparable size. Both polarities almost always find
+            # *something*, so warning on any disagreement in length cried wolf on
+            # most frames — and, worse, made a correct-but-flagged reading lose to
+            # an unflagged wrong one in detect_scale_bar_anywhere, which prefers
+            # results carrying no warning.
+            winner = candidates[best_polarity]
+            rival = max((c for pol, c in candidates.items() if pol != best_polarity),
+                        key=lambda c: c["area"])
+            comparable = rival["area"] >= self.AMBIGUOUS_POLARITY_AREA_RATIO * winner["area"]
+            differs = abs(rival["length"] - winner["length"]) > 0.1 * winner["length"]
+            if comparable and differs:
                 warning = (
                     f"Ambiguous scale bar: bright polarity measured "
-                    f"{candidates.get('bright')}px, dark polarity {candidates.get('dark')}px. "
-                    f"Used '{best_polarity}' ({hi}px). Verify the overlay, or set "
-                    f"polarity explicitly."
+                    f"{candidates['bright']['length']}px, dark polarity "
+                    f"{candidates['dark']['length']}px, and both look equally like a "
+                    f"bar. Used '{best_polarity}' ({winner['length']}px). Verify the "
+                    f"overlay, or set polarity explicitly."
                 )
 
         # Store results
@@ -1233,11 +1336,16 @@ class ScaleDetector:
             {"text_threshold": 0.3, "low_text": 0.2, "allowlist": self.OCR_ALLOWLIST},
         ]
 
+        # Resolved once, outside the loop: a missing EasyOCR must surface as its
+        # own error rather than being swallowed by the per-attempt except and
+        # reported as "no text found".
+        reader = self.reader
+
         best = ""
         for image in images:
             for options in attempts:
                 try:
-                    found = self.reader.readtext(image, **options)
+                    found = reader.readtext(image, **options)
                 except Exception:
                     continue
                 text = " ".join(txt for _, txt, _ in found)
@@ -1263,7 +1371,9 @@ class ScaleDetector:
                 wins on width every time. If None, no thickness limit is applied.
 
         Returns:
-            tuple: (leftmost, rightmost, row) of the best line, or None
+            tuple: ``(leftmost, rightmost, row, spanned_crop, area)`` of the best
+            line, or None. ``area`` is its pixel count, used to compare the two
+            polarities against each other.
         """
         if not binary255.any():
             return None
@@ -1294,7 +1404,7 @@ class ScaleDetector:
         # least one side. They are only used if nothing better exists, so that a
         # box drawn exactly around the bar still works.
         best_label = best_spanning_label = None
-        best_width = best_spanning_width = 0
+        best_area = best_spanning_area = 0
         for label_id in range(1, num_labels):
             comp_w = stats[label_id, cv2.CC_STAT_WIDTH]
             comp_h = stats[label_id, cv2.CC_STAT_HEIGHT]
@@ -1306,14 +1416,24 @@ class ScaleDetector:
             if max_thickness is not None and comp_h > max_thickness:
                 continue
 
+            # ...and solid. Without this, a ragged run through thresholded
+            # background beats the real bar whenever it happens to be wider.
+            comp_area = int(stats[label_id, cv2.CC_STAT_AREA])
+            if comp_area < self.MIN_BAR_FILL * comp_w * comp_h:
+                continue
+
+            # Rank by area rather than width. Width alone also picks the bar's
+            # own anti-aliased edge — a one- or two-pixel-tall sliver a few
+            # pixels wider than the bar it borders, which is solid enough to pass
+            # every other test and measures slightly long.
             comp_x = stats[label_id, cv2.CC_STAT_LEFT]
             spans_crop = comp_x == 0 and (comp_x + comp_w) >= w
             if spans_crop:
-                if comp_w > best_spanning_width:
-                    best_spanning_width = comp_w
+                if comp_area > best_spanning_area:
+                    best_spanning_area = comp_area
                     best_spanning_label = label_id
-            elif comp_w > best_width:
-                best_width = comp_w
+            elif comp_area > best_area:
+                best_area = comp_area
                 best_label = label_id
 
         spanned = False
@@ -1321,6 +1441,7 @@ class ScaleDetector:
             if best_spanning_label is None:
                 return None
             best_label = best_spanning_label
+            best_area = best_spanning_area
             spanned = True
 
         # Get the row and column extents of the best component
@@ -1331,7 +1452,7 @@ class ScaleDetector:
         leftmost = int(cols.min())
         rightmost = int(cols.max())
 
-        return (leftmost, rightmost, bar_row, spanned)
+        return (leftmost, rightmost, bar_row, spanned, int(best_area))
 
     # Known SEM instrument parameter patterns that should NOT be treated as scale
     # These are values like "8.8 mm" (working distance), "10.00 kV", etc.
@@ -1479,25 +1600,74 @@ class ScaleDetector:
                     except (ValueError, TypeError):
                         pass
 
-        # Method 2: Detect a uniform-color strip at the bottom
-        # SEM databars are typically uniform black or dark gray
+        # Method 2: find the solid strip at the bottom by locating its top edge.
+        #
+        # A databar is a block of one background colour carrying text and a rule.
+        # Its rows are therefore not uniform — a row crossing the label has a
+        # high standard deviation — but its row *median* is the background level
+        # throughout, because the glyphs cover only a small part of the width.
+        # Matching on the median tolerates the text while still changing sharply
+        # at the boundary with the micrograph.
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         else:
             gray = image
 
-        # Scan from largest to smallest candidate bar height (up to 15% of image)
-        max_bar_height = int(H * 0.15)
-        for test_height in range(max_bar_height, 10, -2):
-            bottom_strip = gray[H - test_height:, :]
-            row_stds = np.std(bottom_strip, axis=1)
-            # A databar has very low per-row variation (uniform color per row)
-            if np.mean(row_stds) < 35:
-                result['has_databar'] = True
-                result['databar_height'] = test_height
-                result['databar_fraction'] = test_height / H
-                return result
+        row_medians = np.median(gray, axis=1).astype(float)
+        base = row_medians[H - 1]
 
+        # Walk up from the last row while the background level holds. Scanning
+        # further than the largest acceptable bar is deliberate: it is what makes
+        # "no boundary found" distinguishable from "a very tall bar".
+        #
+        # A single disagreeing row does not end the bar — it is usually a rule
+        # drawn across it. Only a run of them means the micrograph has started.
+        # `height` is where the walk has reached; `confirmed` is the last row
+        # that actually matched, so trailing rule rows are not counted in.
+        scan_limit = min(H, int(H * self.DATABAR_SCAN_FRACTION))
+        height = confirmed = 0
+        misses = 0
+        while height < scan_limit:
+            if abs(row_medians[H - 1 - height] - base) <= self.DATABAR_MEDIAN_TOLERANCE:
+                misses = 0
+                height += 1
+                confirmed = height
+            else:
+                misses += 1
+                if misses > self.DATABAR_MAX_RULE_THICKNESS_PX:
+                    break
+                height += 1
+        height = confirmed
+
+        # Too short to be a databar, or no top edge inside the scan window. The
+        # latter means the whole bottom quarter of the frame looks like its last
+        # row — a featureless image, not an image with a bar stuck on it. The
+        # previous implementation scanned largest-first and returned the first
+        # window that passed, so it reported the largest uniform-looking window
+        # rather than the actual edge: it overestimated the height on real
+        # databars, and claimed one on images that had none. Both cost real
+        # micrograph area, since cli.crop_databar trims whatever is reported.
+        if not (self.DATABAR_MIN_HEIGHT_PX <= height <= int(H * self.DATABAR_MAX_FRACTION)):
+            return result
+
+        above = gray[:H - height]
+        if above.size == 0:
+            return result
+
+        # A databar is visibly a different block from the image above it.
+        separation = abs(float(np.median(gray[H - height:])) - float(np.median(above)))
+        if separation < self.DATABAR_MIN_SEPARATION:
+            return result
+
+        # ...and it begins with a drawn edge. Checking the top two rows rather
+        # than only the first tolerates a divider rule along the very top.
+        edge_rows = gray[H - height:H - height + 2].astype(float)
+        if edge_rows.std(axis=1).min() > self.DATABAR_EDGE_ROW_STD:
+            return result
+
+        result['has_databar'] = True
+        result['databar_height'] = height
+        result['databar_fraction'] = height / H
         return result
 
     # Where scale bars are found, as (region_x, region_y, region_width,
