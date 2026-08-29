@@ -51,3 +51,4 @@ test_*.py
 # Gradio cache
 gradio_cached_examples/
 flagged/
+add_scale_bars.ipynb
