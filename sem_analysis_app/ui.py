@@ -17,6 +17,8 @@ from .callbacks import (
     prepare_scale_tab,
     read_box_scale,
     set_canvas_mode,
+    set_modality,
+    set_particle_polarity,
 
     save_and_next,
     skip_to_next,
@@ -169,6 +171,29 @@ def create_interface():
                 tier1_status = gr.Textbox(
                     label="Tier 1 — file metadata (automatic)", interactive=False, lines=2
                 )
+
+                with gr.Accordion("🔬 Frame — instrument, particle polarity, "
+                                  "analysable area", open=True):
+                    gr.Markdown(
+                        "SEM and TEM need opposite handling. The instrument is read "
+                        "from the file where it says so; override it if the reading "
+                        "is wrong. Beam-blocked area — an aperture vignette, a grid "
+                        "bar — and any burned-in scale bar are left out of "
+                        "measurement, because they out-contrast the particles and "
+                        "would be counted instead of them."
+                    )
+                    with gr.Row():
+                        modality_choice = gr.Dropdown(
+                            choices=["auto", "SEM", "TEM"], value="auto",
+                            label="Instrument",
+                        )
+                        particle_choice = gr.Dropdown(
+                            choices=["auto", "bright", "dark"], value="auto",
+                            label="Particles are",
+                            info="auto follows the instrument: bright for SEM, "
+                                 "dark for TEM",
+                        )
+                    frame_status = gr.Markdown("Load an image to detect the instrument.")
 
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -498,7 +523,8 @@ def create_interface():
             outputs=[current_image, selected_image_info, tabs, click_mode_radio]
         ).then(
             prepare_scale_tab,
-            outputs=[scale_image_in, tier1_status, scale_summary, point_readout]
+            outputs=[scale_image_in, tier1_status, scale_summary, point_readout,
+                     frame_status]
         ).then(
             None, js="() => { window.SCALE && window.SCALE.load(); }"
         ).then(
@@ -552,6 +578,15 @@ def create_interface():
 
         clear_scale_btn.click(
             clear_scale, outputs=[tier_status, scale_summary]
+        )
+
+        # An override re-derives the frame's geometry, since the instrument
+        # decides whether a databar is expected and which way round particles are.
+        modality_choice.change(
+            set_modality, inputs=[modality_choice], outputs=[frame_status]
+        )
+        particle_choice.change(
+            set_particle_polarity, inputs=[particle_choice], outputs=[frame_status]
         )
 
         # Processing tab — scale detection mode
@@ -685,7 +720,7 @@ def create_interface():
             outputs=[save_status, gallery, selected_image_info, current_image,
                      scale_status, crop_percent_slider, mask_viz, segment_status,
                      mask_choice, tabs, scale_image_in, tier1_status,
-                     scale_summary, point_readout]
+                     scale_summary, point_readout, frame_status]
         ).then(
             None, js="() => { window.SCALE && window.SCALE.load(); }"
         )
@@ -693,7 +728,7 @@ def create_interface():
         skip_btn.click(
             skip_to_next,
             outputs=[selected_image_info, current_image, tabs, scale_image_in,
-                     tier1_status, scale_summary, point_readout]
+                     tier1_status, scale_summary, point_readout, frame_status]
         ).then(
             None, js="() => { window.SCALE && window.SCALE.load(); }"
         ).then(

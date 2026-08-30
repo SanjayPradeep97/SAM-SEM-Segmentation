@@ -38,6 +38,19 @@ class AppState:
         # (x0, y0, w, h) of a scale bar printed inside the frame, excluded from
         # segmentation so it isn't measured as a particle.
         self.scale_bar_region = None
+        # Which instrument produced the current frame. Decides particle polarity
+        # and whether a databar is expected; see sem_particle_analysis.modality.
+        self.modality = None
+        # Boolean mask of the part of the frame that is specimen — beam-blocked
+        # area and burned-in annotations removed. Everything outside it would
+        # otherwise be measured as particles.
+        self.analysable_region = None
+        self.region_info = {}
+        # "auto" | "SEM" | "TEM": an analyst's override of detection, kept across
+        # images in a session because a folder is normally one instrument.
+        self.modality_choice = "auto"
+        # "auto" | "bright" | "dark": likewise for particle polarity.
+        self.particle_choice = "auto"
         self.selected_mask_index = None
         self.analyzer = None
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
@@ -81,6 +94,11 @@ class AppState:
         # (x0, y0, w, h) of a scale bar printed inside the frame, excluded from
         # segmentation so it isn't measured as a particle.
         self.scale_bar_region = None
+        # Per-image, unlike modality_choice/particle_choice which the analyst
+        # sets once for a folder.
+        self.modality = None
+        self.analysable_region = None
+        self.region_info = {}
         self.selected_mask_index = None
         self.analyzer = None
         self.click_mode = "delete"

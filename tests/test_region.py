@@ -1,0 +1,144 @@
+"""
+Telling specimen from everything else in the frame.
+
+Non-specimen area is the pipeline's largest source of wrong numbers, because it
+is also the highest-contrast thing present. On the real set an SEM aperture
+vignette *was* the five reported "particles", at a median 119 µm, and a TEM grid
+bar produced 221 spurious ones. Both are the same shape of thing — a large,
+near-black region reaching the frame edge — so one rule covers them.
+"""
+
+import numpy as np
+import pytest
+
+from sem_particle_analysis import region as reg
+from synthetic import make_burnin_micrograph, make_grid_bar_frame, make_vignetted_frame
+
+
+class TestBlockedArea:
+    def test_finds_the_corners_of_a_vignetted_frame(self):
+        image, truth = make_vignetted_frame()
+        blocked = reg.blocked_area(image)
+        corners = truth["corner_mask"]
+        # Most of the true corner area is caught...
+        assert (blocked & corners).sum() > 0.9 * corners.sum()
+        # ...and the illuminated disc is essentially untouched. The margin grows
+        # the region slightly inwards, which is deliberate.
+        inside = truth["illuminated"]
+        assert (blocked & inside).sum() < 0.08 * inside.sum()
+
+    def test_leaves_the_particles_alone(self):
+        image, truth = make_vignetted_frame()
+        blocked = reg.blocked_area(image)
+        assert not (blocked & truth["particle_mask"]).any()
+
+    def test_finds_a_grid_bar(self):
+        blocked = reg.blocked_area(make_grid_bar_frame())
+        assert 0.1 < blocked.mean() < 0.6, "a grid bar covers a big slice, not everything"
+
+    def test_a_clean_frame_has_nothing_blocked(self):
+        image, _ = make_burnin_micrograph()
+        assert not reg.blocked_area(image).any()
+
+    def test_a_uniform_frame_has_nothing_blocked(self):
+        assert not reg.blocked_area(np.full((300, 400), 120, dtype=np.uint8)).any()
+
+    def test_a_dark_object_floating_in_the_field_is_sample(self):
+        # A dark agglomerate that does not reach the edge is specimen, however
+        # dark it is. Only edge-connected regions are beam-blocked.
+        image = np.full((400, 400), 200, dtype=np.uint8)
+        image[150:250, 150:250] = 0
+        assert not reg.blocked_area(image).any()
+
+    def test_a_small_dark_edge_touch_is_not_blocked(self):
+        # A particle clipped by the frame edge is still a particle.
+        image = np.full((400, 400), 200, dtype=np.uint8)
+        image[0:12, 0:12] = 0
+        assert not reg.blocked_area(image).any()
+
+    def test_a_large_dark_edge_region_is_blocked(self):
+        image = np.full((400, 400), 200, dtype=np.uint8)
+        image[0:120, 0:200] = 0
+        blocked = reg.blocked_area(image)
+        assert blocked.any()
+        assert blocked[10, 10]
+        assert not blocked[350, 350]
+
+
+class TestAnalysableRegion:
+    def test_excludes_the_blocked_area(self):
+        image, truth = make_vignetted_frame()
+        region, info = reg.analysable_region(image)
+        assert info["analysable_fraction"] < 1.0
+        assert not region[0, 0], "the corner should be out"
+        assert region[image.shape[0] // 2, image.shape[1] // 2]
+
+    def test_a_clean_frame_is_entirely_analysable(self):
+        image, _ = make_burnin_micrograph()
+        region, info = reg.analysable_region(image)
+        assert info["analysable_fraction"] == 1.0
+        assert region.all()
+
+    def test_excludes_a_named_box(self):
+        # The burned-in scale bar: known position, must not be measured.
+        image, truth = make_burnin_micrograph()
+        x0, y0, w, h = truth["bar_box"]
+        region, info = reg.analysable_region(image, exclude_boxes=[(x0, y0, w, h)])
+        assert info["excluded_boxes"] == 1
+        assert not region[y0 + h // 2, x0 + w // 2]
+        assert region[100, 500]
+
+    def test_ignores_malformed_boxes(self):
+        image, _ = make_burnin_micrograph()
+        region, info = reg.analysable_region(image, exclude_boxes=[None, (1, 2, 3)])
+        assert info["excluded_boxes"] == 0
+        assert region.all()
+
+    def test_accepts_a_precomputed_blocked_mask(self):
+        image, _ = make_burnin_micrograph()
+        blocked = np.zeros(image.shape[:2], dtype=bool)
+        blocked[0:50, :] = True
+        region, info = reg.analysable_region(image, blocked=blocked)
+        # Recorded rounded, for a readable provenance file.
+        assert info["blocked_fraction"] == pytest.approx(blocked.mean(), abs=1e-5)
+        assert not region[10, 10]
+
+    def test_info_is_json_friendly(self):
+        import json
+
+        image, _ = make_vignetted_frame()
+        _region, info = reg.analysable_region(image)
+        json.dumps(info)   # goes straight into run.json
+        assert set(info) == {"blocked_fraction", "excluded_boxes", "analysable_fraction"}
+
+
+class TestUsable:
+    def test_a_mostly_clear_frame_is_usable(self):
+        assert reg.usable(np.ones((100, 100), dtype=bool))
+
+    def test_a_mostly_blocked_frame_is_not(self):
+        region = np.zeros((100, 100), dtype=bool)
+        region[:10] = True     # 10% left
+        assert not reg.usable(region)
+
+    def test_the_threshold_is_adjustable(self):
+        region = np.zeros((100, 100), dtype=bool)
+        region[:30] = True
+        assert reg.usable(region, minimum=0.2)
+        assert not reg.usable(region, minimum=0.5)
+
+    def test_no_region_means_no_restriction(self):
+        assert reg.usable(None)
+
+
+class TestNoDeprecationWarnings:
+    def test_the_region_path_is_clean(self):
+        import warnings
+
+        image, _ = make_vignetted_frame()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            reg.analysable_region(image)
+        offenders = [f"{w.category.__name__}: {w.message}" for w in caught
+                     if issubclass(w.category, (DeprecationWarning, FutureWarning))]
+        assert not offenders, offenders

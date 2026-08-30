@@ -143,9 +143,10 @@ def save_and_next(progress=gr.Progress()):
     Returns:
         tuple: (save_status, gallery, image_info, image_view, scale_status,
                 crop_slider, mask_viz, segment_status, mask_choice, tabs,
-                canvas_payload, tier1_status, scale_summary, point_readout)
+                canvas_payload, tier1_status, scale_summary, point_readout,
+                frame_summary)
     """
-    blank = (gr.update(),) * 13
+    blank = (gr.update(),) * 14
     save_status, gallery_data = save_current_results()
     if gallery_data is None:
         # Nothing was saved — stay put rather than advancing past unsaved work.
@@ -155,17 +156,17 @@ def save_and_next(progress=gr.Progress()):
     image, info = _load_index(next_index)
     if image is None:
         return ((f"{save_status} — {info}. All done.", gallery_data, info)
-                + (gr.update(),) * 11)
+                + (gr.update(),) * 12)
 
     # Establish scale for the new image before segmenting it.
-    payload, tier1, summary, hint = prepare_scale_tab()
+    payload, tier1, summary, hint, frame = prepare_scale_tab()
 
     scale_status, image_view, crop_update, mask_viz, segment_status, choice_update = \
         auto_process_current_image(progress)
 
     return (save_status, gallery_data, info, image_view, scale_status,
             crop_update, mask_viz, segment_status, choice_update,
-            gr.Tabs(selected=2), payload, tier1, summary, hint)
+            gr.Tabs(selected=2), payload, tier1, summary, hint, frame)
 
 
 def skip_to_next():
@@ -174,10 +175,10 @@ def skip_to_next():
 
     Returns:
         tuple: (image_info, image_view, tabs, canvas_payload, tier1_status,
-                scale_summary, point_readout)
+                scale_summary, point_readout, frame_summary)
     """
     image, info = _load_index(state.current_index + 1)
     if image is None:
-        return (info,) + (gr.update(),) * 6
-    payload, tier1, summary, hint = prepare_scale_tab()
-    return info, image, gr.Tabs(selected=2), payload, tier1, summary, hint
+        return (info,) + (gr.update(),) * 7
+    payload, tier1, summary, hint, frame = prepare_scale_tab()
+    return info, image, gr.Tabs(selected=2), payload, tier1, summary, hint, frame

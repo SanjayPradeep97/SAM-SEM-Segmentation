@@ -15,10 +15,14 @@ import gradio as gr
 import numpy as np
 from PIL import Image
 
+from sem_particle_analysis import modality, region
 from sem_particle_analysis import scale_calibration as sc
 from ..state import state
 
 UNITS = ["nm", "µm", "mm", "Å"]
+
+# Particle polarity choices offered in the UI, as the segmenter's dark_features.
+POLARITY_CHOICES = {"auto": None, "bright": False, "dark": True}
 
 # Anything larger is downscaled for transport to the browser. Well above the
 # 2048px micrographs in use, so the magnifier still shows real pixels.
@@ -85,9 +89,11 @@ def _bar_region(calibration):
     Only meaningful when the bar was found inside the image itself.
     """
     extra = getattr(calibration, "extra", None) or {}
-    region = extra.get("region")
-    if region and len(region) == 4:
-        return tuple(int(v) for v in region)
+    # Not named `region`: that is the module handling analysable area, imported
+    # above and used a few lines further down.
+    found = extra.get("region")
+    if found and len(found) == 4:
+        return tuple(int(v) for v in found)
     box = extra.get("box")
     if box and len(box) == 4:
         x0, y0, x1, y1 = (int(v) for v in box)
@@ -133,6 +139,19 @@ def _apply_frame_geometry(calibration):
         state.crop_percent = 0.0
         state.scale_bar_region = _bar_region(calibration)
 
+    # Which instrument this is decides particle polarity, and an analyst's
+    # explicit choice always wins over what the file says.
+    state.modality = (modality.resolve(state.modality_choice)
+                      or modality.detect(image, metadata=_raw_metadata(),
+                                         databar_height=bar_height))
+
+    # Everything in the frame that is not specimen — beam-blocked area, and the
+    # scale bar when it is printed inside the image. Left out of segmentation, so
+    # an aperture vignette or a grid bar is never measured as a particle.
+    boxes = [state.scale_bar_region] if state.scale_bar_region else []
+    state.analysable_region, state.region_info = region.analysable_region(
+        state.cropped_image, exclude_boxes=boxes)
+
 
 def _adopt(calibration):
     """
@@ -145,6 +164,64 @@ def _adopt(calibration):
     state.scale_info = calibration.to_dict()
     _apply_frame_geometry(calibration)
     return calibration
+
+
+def frame_summary():
+    """
+    What the app has decided about the current frame, beyond its scale.
+
+    Shown because both decisions change the numbers and neither is visible in
+    the result: the modality sets which side of the frame the particles are on,
+    and the analysable region is what is left after beam-blocked area and any
+    burned-in scale bar are taken out.
+    """
+    kind = getattr(state, "modality", None)
+    if kind is None:
+        return "Load an image to detect the instrument."
+
+    source = "from the file" if kind.from_metadata else "inferred"
+    if state.modality_choice != "auto":
+        source = "set by hand"
+    lines = [f"**{kind.label}** ({source}) — {kind.detail}"]
+
+    polarity = {None: "brighter or darker, decided by contrast",
+                False: "brighter than the background",
+                True: "darker than the background"}
+    choice = state.particle_choice
+    resolved = (POLARITY_CHOICES[choice] if choice != "auto" else kind.dark_particles)
+    lines.append(f"Particles are **{polarity[resolved]}**"
+                 + ("" if choice == "auto" else " (set by hand)"))
+
+    info = getattr(state, "region_info", None) or {}
+    blocked = 1 - info.get("analysable_fraction", 1.0)
+    if blocked > 0.005:
+        parts = [f"{100 * blocked:.1f}% of the frame excluded"]
+        if info.get("blocked_fraction", 0) > 0.005:
+            parts.append("beam-blocked area")
+        if info.get("excluded_boxes"):
+            parts.append("burned-in scale bar")
+        lines.append(" — ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1
+                     else parts[0])
+    else:
+        lines.append("Whole frame is analysable.")
+
+    if state.crop_percent:
+        lines.append(f"Databar trimmed: {state.crop_percent:.2f}% off the bottom.")
+    return "\n\n".join(lines)
+
+
+def set_modality(choice):
+    """Override which instrument the frame is treated as, and re-derive geometry."""
+    state.modality_choice = choice or "auto"
+    if state.current_image is not None:
+        _apply_frame_geometry(getattr(state, "scale_calibration", None))
+    return frame_summary()
+
+
+def set_particle_polarity(choice):
+    """Override which side of the frame holds the particles."""
+    state.particle_choice = choice or "auto"
+    return frame_summary()
 
 
 def _status_lines():
@@ -169,10 +246,10 @@ def prepare_scale_tab():
     Open an image on the Scale tab and run tier 1.
 
     Returns:
-        tuple: (canvas_payload, tier1_status, summary, points_hint)
+        tuple: (canvas_payload, tier1_status, summary, points_hint, frame_summary)
     """
     if state.current_image is None:
-        return "", "No image loaded", _status_lines(), ""
+        return "", "No image loaded", _status_lines(), "", frame_summary()
 
     state.scale_calibration = None
     state.scale_info = None
@@ -192,7 +269,7 @@ def prepare_scale_tab():
     name = os.path.basename(str(path)) if path else "image"
     return (payload,
             f"✅ Tier 1 — pixel size read from {name}'s metadata. Nothing else to do.",
-            _status_lines(), "")
+            _status_lines(), "", frame_summary())
 
 
 def _try_automatic_bar(payload, tier1_message):
@@ -207,10 +284,13 @@ def _try_automatic_bar(payload, tier1_message):
     try:
         found = _detector().detect_scale_bar_anywhere(state.current_image)
     except Exception:
+        # Scale failed, but the frame's geometry and instrument are still worth
+        # working out — measurements can proceed in pixels.
+        _apply_frame_geometry(None)
         return (payload,
                 tier1_message + " Draw a box below (tier 2), or click both ends of "
                 "the bar (tier 3).",
-                _status_lines(), "")
+                _status_lines(), "", frame_summary())
 
     calibration = sc.ScaleCalibration(
         nm_per_px=float(found["conversion"]),
@@ -234,7 +314,7 @@ def _try_automatic_bar(payload, tier1_message):
 
     return (payload,
             tier1_message + " Tier 2 ran automatically — check the box on the image.",
-            _status_lines(), "")
+            _status_lines(), "", frame_summary())
 
 
 def read_box_scale(box_json, progress=gr.Progress()):

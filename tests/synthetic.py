@@ -211,8 +211,46 @@ def make_grid_bar_frame(width=1024, height=1024, background_gray=205, noise=9.0,
     field = np.clip(rng.normal(background_gray, noise, size=(height, width)), 0, 255)
 
     yy, xx = np.mgrid[0:height, 0:width]
-    # A diagonal band across the bottom-left, as a grid bar appears.
-    wedge = yy > (height * 0.80 + 0.45 * xx)
+    # A diagonal band across the bottom-left, as a grid bar appears. Sized to
+    # cover roughly a fifth of the frame, matching what the real TEM frames show.
+    wedge = yy > (height * 0.55 + 0.45 * xx)
     field[wedge] = rng.normal(4, 2.5, size=int(wedge.sum())).clip(0, 255)
 
     return np.stack([field.astype(np.uint8)] * 3, axis=-1)
+
+
+def make_vignetted_frame(width=1024, height=768, background_gray=110, noise=8.0,
+                         radius_frac=0.48, particle_gray=225, n_particles=12,
+                         seed=2):
+    """
+    An SEM-style frame shot through a circular aperture.
+
+    The corners fall to black, which is what a whole-frame mask latches onto:
+    on the real set those wedges *were* the reported particles. Bright specks are
+    scattered inside the illuminated disc so there is something real to find.
+
+    Returns:
+        tuple: (rgb_image, truth) with ``particle_mask`` and ``corner_mask``.
+    """
+    rng = np.random.default_rng(seed)
+    field = np.clip(rng.normal(background_gray, noise, size=(height, width)), 0, 255)
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    cy, cx = height / 2, width / 2
+    radius = radius_frac * max(height, width)
+    inside = ((xx - cx) ** 2 + (yy - cy) ** 2) <= radius ** 2
+    field[~inside] = rng.normal(2, 1.5, size=int((~inside).sum())).clip(0, 255)
+
+    particles = np.zeros((height, width), dtype=bool)
+    for _ in range(n_particles):
+        r = rng.uniform(6, 14)
+        px = rng.uniform(cx - radius * 0.6, cx + radius * 0.6)
+        py = rng.uniform(cy - radius * 0.5, cy + radius * 0.5)
+        blob = ((xx - px) ** 2 + (yy - py) ** 2) <= r ** 2
+        blob &= inside
+        particles |= blob
+    field[particles] = rng.normal(particle_gray, 6, size=int(particles.sum())).clip(0, 255)
+
+    image = np.stack([field.astype(np.uint8)] * 3, axis=-1)
+    return image, {"particle_mask": particles, "corner_mask": ~inside,
+                   "illuminated": inside}
