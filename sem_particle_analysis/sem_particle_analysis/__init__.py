@@ -5,6 +5,7 @@ A Python package for segmenting and analyzing particles in SEM/TEM images
 using Meta's Segment Anything Model (SAM).
 """
 
+from . import modality, region
 from .model import SAMModel, discover_checkpoints, infer_model_type
 from .scale_detection import OCRUnavailableError, ScaleDetector
 from .segmentation import ParticleSegmenter
@@ -33,6 +34,8 @@ __all__ = [
     "infer_model_type",
     "ScaleDetector",
     "OCRUnavailableError",
+    "modality",
+    "region",
     "ParticleSegmenter",
     "ParticleAnalyzer",
     "ResultsManager",

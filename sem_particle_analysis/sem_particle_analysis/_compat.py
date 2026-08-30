@@ -70,3 +70,23 @@ def remove_objects_smaller_than(mask, min_size):
         return morphology.remove_small_objects(mask, max_size=min_size - 1)
     except TypeError:  # scikit-image < 0.26 has no max_size
         return morphology.remove_small_objects(mask, min_size=min_size)
+
+
+def binary_dilation(mask, footprint):
+    """
+    Morphological dilation of a boolean mask. See :func:`binary_opening`.
+
+    Note that scikit-image's replacement does not mirror non-symmetric
+    footprints; every footprint used here is symmetric, so the two agree.
+    """
+    try:
+        return morphology.dilation(mask, footprint).astype(bool)
+    except AttributeError:  # pragma: no cover - very old scikit-image
+        return morphology.binary_dilation(mask, footprint)
+
+
+def fill_holes(mask):
+    """Fill enclosed background regions in a boolean mask."""
+    from scipy import ndimage as ndi
+
+    return ndi.binary_fill_holes(mask.astype(bool))
