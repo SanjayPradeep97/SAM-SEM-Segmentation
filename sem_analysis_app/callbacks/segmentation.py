@@ -12,6 +12,24 @@ from ..visualization import (
 )
 from ..state import state
 
+# The analyst's polarity choice, as the ``dark_features`` the segmenter takes.
+POLARITY_CHOICES = {"auto": None, "bright": False, "dark": True}
+
+
+def _particle_polarity():
+    """
+    Whether particles are the darker side of the frame, or None to use contrast.
+
+    An explicit choice wins; otherwise the detected modality decides, since
+    material on an SEM filter reads brighter than the membrane and
+    electron-dense material in TEM reads darker than the support film.
+    """
+    chosen = getattr(state, "particle_choice", "auto") or "auto"
+    if chosen != "auto":
+        return POLARITY_CHOICES[chosen]
+    return state.modality.dark_particles if state.modality else None
+
+
 def segment_with_sam(progress=gr.Progress()):
     """Segment image with SAM."""
     try:
@@ -28,22 +46,23 @@ def segment_with_sam(progress=gr.Progress()):
         )
 
         progress(0.7, desc="Ranking candidates...")
-        # A scale bar printed inside the frame is a high-contrast object and would
-        # otherwise be measured as a particle.
-        exclude = None
-        region = getattr(state, "scale_bar_region", None)
-        if region and state.cropped_image is not None:
-            import numpy as np
+        # Everything that is not specimen: beam-blocked area — an SEM aperture
+        # vignette, a TEM grid bar — and a scale bar printed inside the frame.
+        # All of them out-contrast the particles, so leaving them in means
+        # measuring them instead.
+        analysable = getattr(state, "analysable_region", None)
+        exclude = ~analysable if analysable is not None else None
 
-            x0, y0, box_w, box_h = region
-            exclude = np.zeros(state.cropped_image.shape[:2], dtype=bool)
-            exclude[y0:y0 + box_h, x0:x0 + box_w] = True
+        # Which side of the frame holds the particles. Left to contrast, this
+        # picks the vignette or the grid bar; the modality knows the answer.
+        dark_particles = _particle_polarity()
 
         # Rank by contrast rather than showing SAM's raw output in its own order.
         # Either polarity of any candidate may be the one holding the objects, and
         # the highest-confidence mask is frequently the background.
         state.candidates = state.segmenter.rank_candidates(
-            state.cropped_image, raw_masks, top_k=3, exclude=exclude
+            state.cropped_image, raw_masks, top_k=3,
+            dark_features=dark_particles, exclude=exclude,
         )
 
         if not state.candidates:
@@ -100,6 +119,11 @@ def select_mask_and_analyze(mask_choice, progress=gr.Progress()):
         # background whenever the objects were the brighter side.
         candidate = state.candidates[mask_index]
         binary_mask = candidate["mask"]
+        # Restrict to specimen before measuring, so nothing outside the
+        # analysable region is counted even if it survived into the mask.
+        analysable = getattr(state, "analysable_region", None)
+        if analysable is not None and analysable.shape == binary_mask.shape:
+            binary_mask = binary_mask & analysable
         state.segmenter.selected_mask = binary_mask
         state.segmenter.selected_mask_index = candidate["mask_index"]
 

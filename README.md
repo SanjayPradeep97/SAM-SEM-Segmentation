@@ -80,7 +80,35 @@ overrides what you set here.
 Calibration needs only OCR, so you can sort out scale before loading a SAM
 checkpoint.
 
-### 5. Batch Analysis Without the GUI
+### 5. SEM and TEM in One Workflow
+
+The two need opposite handling, and the app works out which it is looking at from
+the file rather than asking you to remember:
+
+| | SEM | TEM |
+| --- | --- | --- |
+| Instrument read from | FEI / Zeiss / Hitachi / TESCAN tags | JEOL mode tag, else frame shape |
+| Databar | detected and trimmed | none — frame kept whole |
+| Scale bar | in the databar, which gets cropped | burned into the frame, so its patch is excluded from measurement |
+| Particles are | **brighter** than the substrate | **darker** than the support film |
+
+Both decisions are shown on the Scale tab and can be overridden there, or with
+`--modality` and `--particles` in batch mode.
+
+**Analysable region.** Micrographs routinely contain large areas that are not
+specimen — the black corners left by a circular aperture, a specimen grid bar
+blocking the beam, a burned-in scale bar. Every one of them out-contrasts the
+particles, so they are excluded before anything is measured. Left in, they are
+what gets measured: on real frames these produced five "particles" of 119 µm
+that were the corner wedges, and 221 spurious particles that were a grid bar.
+The share excluded is shown on the Scale tab and recorded per image in
+`run.json`.
+
+**Magnification.** Low-magnification overviews are navigation frames; their
+particles are a few pixels across and counting them adds noise. `--max-nm-per-px`
+skips them, and skipped frames are recorded as skipped rather than failed.
+
+### 6. Batch Analysis Without the GUI
 
 For a dataset you intend to publish, run the pipeline headless. Every run writes
 a `run.json` recording the image hashes, model and checkpoint hash, the scale and
@@ -104,12 +132,16 @@ Useful flags:
 | `--min-size N` | Ignore particles below N pixels (default 30) |
 | `--crop-percent P` | Override databar removal (default: measure it) |
 | `--model-type vit_b` | Faster, lower quality than the default `vit_h` |
+| `--modality SEM\|TEM` | Force the instrument kind (default: read it from the file) |
+| `--particles bright\|dark` | Force particle polarity (default: follow the modality) |
+| `--max-nm-per-px X` | Skip frames coarser than this — magnifications too low to resolve particles |
+| `--min-nm-per-px X` | Skip frames finer than this |
 
 Note that batch mode uses the automatic pipeline only — no interactive
 refinement — and picks its mask candidate by heuristic. The chosen mask and the
 rejected candidates are recorded in `run.json`.
 
-### 6. Use as Python Package
+### 7. Use as Python Package
 
 ```python
 from sem_particle_analysis import SAMModel, ParticleAnalyzer
@@ -117,7 +149,7 @@ from sem_particle_analysis import SAMModel, ParticleAnalyzer
 # Your code here
 ```
 
-### 7. Run the Tests
+### 8. Run the Tests
 
 ```bash
 pytest                      # everything

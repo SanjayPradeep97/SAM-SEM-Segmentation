@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from . import modality, region
 from .analysis import ParticleAnalyzer
 from .model import SAMModel, discover_checkpoints, infer_model_type
 from .scale_detection import ScaleDetector
@@ -29,6 +30,49 @@ from .utils import find_images_in_folder, load_image
 
 # Used only when the databar can't be measured.
 DEFAULT_CROP_PERCENT = 7.0
+
+# --particles, as the ``dark_features`` argument the segmenter takes.
+POLARITY_CHOICES = {"auto": None, "bright": False, "dark": True}
+
+
+class FrameSkipped(Exception):
+    """
+    Raised when a frame is deliberately not analysed.
+
+    Distinct from a failure: the run is fine, this frame simply does not belong
+    in the measurement. Recorded as such so a skipped navigation shot is never
+    mistaken for an image the pipeline choked on.
+    """
+
+
+def _out_of_scale_range(nm_per_px, args):
+    """Why this frame's magnification excludes it, or None to analyse it."""
+    if nm_per_px is None:
+        return None
+    ceiling = getattr(args, "max_nm_per_px", None)
+    floor = getattr(args, "min_nm_per_px", None)
+    if ceiling is not None and nm_per_px > ceiling:
+        return (f"{nm_per_px:.4g} nm/px is coarser than the --max-nm-per-px limit "
+                f"of {ceiling:g}; magnification too low to resolve particles")
+    if floor is not None and nm_per_px < floor:
+        return (f"{nm_per_px:.4g} nm/px is finer than the --min-nm-per-px limit "
+                f"of {floor:g}")
+    return None
+
+
+def _polarity(args, kind):
+    """
+    Which side of the frame holds the particles, as ``dark_features``.
+
+    An explicit --particles wins; otherwise the modality decides, because it
+    knows: material on an SEM filter substrate reads brighter than the membrane,
+    and electron-dense material in TEM reads darker than the support film. Only
+    when the modality is genuinely unknown is this left to contrast.
+    """
+    chosen = getattr(args, "particles", "auto") or "auto"
+    if chosen != "auto":
+        return POLARITY_CHOICES[chosen]
+    return kind.dark_particles
 
 def _repo_root():
     # cli.py -> sem_particle_analysis -> sem_particle_analysis -> repo root
@@ -92,6 +136,7 @@ def resolve_scale(detector, image, image_path, args):
 
     try:
         result = detector.detect_scale(image, file_path=str(image_path), method=args.scale_method)
+        bar_region = result.get("region")
         return result["conversion"], {
             "method": result.get("method", args.scale_method),
             "nm_per_px": result["conversion"],
@@ -99,6 +144,9 @@ def resolve_scale(detector, image, image_path, args):
             "pixel_length": result.get("pixel_length"),
             "ocr_text": result.get("ocr_text"),
             "warning": result.get("warning"),
+            # Where the bar was read, so a bar printed inside the micrograph can
+            # be excluded from measurement instead of counted as a particle.
+            "region": list(bar_region) if bar_region else None,
         }
     except Exception as exc:
         return None, {"method": "failed", "nm_per_px": None, "error": str(exc)}
@@ -177,22 +225,55 @@ def crop_databar(detector, image, args, metadata=None):
 def analyze_image(image_path, sam_model, detector, args):
     """Run scale detection, segmentation and measurement for a single image."""
     image = load_image(str(image_path))
+    metadata = read_metadata(image_path)
 
     nm_per_px, scale_info = resolve_scale(detector, image, image_path, args)
+
+    # Magnification gate, before anything expensive runs. A low-magnification
+    # overview is a navigation frame: its particles are a few pixels across, so
+    # counting them adds noise to a distribution rather than information.
+    reason = _out_of_scale_range(nm_per_px, args)
+    if reason:
+        raise FrameSkipped(reason)
 
     # Trim the databar so it can't be segmented as a particle. Measuring its
     # height beats a fixed percentage, which either leaves a strip behind (and
     # the leftover text fragments into "particles") or eats into the micrograph.
     # The instrument's own scan height, when it recorded one, beats measuring.
-    working, crop_info = crop_databar(detector, image, args,
-                                      metadata=read_metadata(image_path))
+    working, crop_info = crop_databar(detector, image, args, metadata=metadata)
+
+    # SEM and TEM need opposite handling. Which one this is decides whether
+    # particles are the brighter or the darker side of the frame, and guessing
+    # that from contrast alone picks the aperture vignette or the grid bar
+    # instead of the sample.
+    kind = modality.resolve(getattr(args, "modality", None)) or modality.detect(
+        image, metadata=metadata, databar_height=crop_info.get("rows_removed", 0))
+
+    # Everything in the frame that is not specimen: beam-blocked area, and the
+    # scale bar when it is printed inside the image rather than in a databar.
+    exclude_boxes = []
+    bar_region = (scale_info or {}).get("region")
+    if bar_region and crop_info.get("rows_removed", 0) == 0:
+        exclude_boxes.append(bar_region)
+    analysable, region_info = region.analysable_region(working, exclude_boxes=exclude_boxes)
+    region_info["modality"] = kind.to_dict()
+
+    if not region.usable(analysable):
+        raise ValueError(
+            f"Only {100 * region_info['analysable_fraction']:.0f}% of the frame is "
+            f"specimen; the rest is beam-blocked. Too little to count."
+        )
 
     segmenter = ParticleSegmenter(sam_model)
     masks, scores = segmenter.segment_image(working, multimask_output=True)
 
     # Same ranking the app shows the analyst, so a batch run and an interactive
     # one agree about which mask is the right one.
-    candidates = segmenter.rank_candidates(working, masks, top_k=3)
+    dark_particles = _polarity(args, kind)
+    candidates = segmenter.rank_candidates(
+        working, masks, top_k=3, dark_features=dark_particles,
+        exclude=~analysable,
+    )
     if not candidates:
         raise ValueError(
             "No mask candidate isolated anything convincing; the image may need "
@@ -201,8 +282,10 @@ def analyze_image(image_path, sam_model, detector, args):
 
     chosen = candidates[0]
     analyzer = ParticleAnalyzer(conversion_factor=nm_per_px, min_size=args.min_size)
+    # Restrict to specimen before measuring, so nothing outside it is counted
+    # even if it survived into the chosen mask.
     analyzer.analyze_mask(
-        chosen["mask"], min_size=args.min_size,
+        chosen["mask"] & analysable, min_size=args.min_size,
         remove_border=True, border_buffer=args.border_buffer,
     )
     mask_index, inverted, fraction = (
@@ -221,6 +304,9 @@ def analyze_image(image_path, sam_model, detector, args):
         "stats": stats,
         "scale": scale_info,
         "crop": crop_info,
+        "modality": kind,
+        "region": region_info,
+        "dark_particles": dark_particles,
         "mask_index": int(mask_index),
         "mask_inverted": bool(inverted),
         "mask_foreground_fraction": round(fraction, 4),
@@ -289,6 +375,23 @@ def build_parser():
                             "Default is to measure the databar; use 0 to keep the "
                             "full frame")
 
+    frame = parser.add_argument_group("frame")
+    frame.add_argument("--modality", default="auto",
+                       choices=["auto", "SEM", "TEM"],
+                       help="Instrument kind. Decides particle polarity and whether "
+                            "a databar is expected (default: read it from the file)")
+    frame.add_argument("--particles", default="auto",
+                       choices=["auto", "bright", "dark"],
+                       help="Whether particles are brighter or darker than their "
+                            "surroundings. Default follows the modality: bright for "
+                            "SEM, dark for TEM")
+    frame.add_argument("--max-nm-per-px", type=float,
+                       help="Skip frames coarser than this, i.e. magnifications too "
+                            "low to resolve particles. Low-magnification overviews "
+                            "are for navigation and counting them adds noise")
+    frame.add_argument("--min-nm-per-px", type=float,
+                       help="Skip frames finer than this")
+
     analysis = parser.add_argument_group("analysis")
     analysis.add_argument("--min-size", type=int, default=30,
                           help="Discard particles smaller than this many pixels (default: 30)")
@@ -342,6 +445,10 @@ def main(argv=None):
         print(f"[{number}/{len(image_paths)}] {image_path.name}")
         try:
             result = analyze_image(image_path, sam_model, detector, args)
+        except FrameSkipped as skip:
+            print(f"    skipped: {skip}")
+            image_records.append({"image": str(image_path), "skipped": str(skip)})
+            continue
         except Exception as exc:
             print(f"    failed: {exc}", file=sys.stderr)
             image_records.append({"image": str(image_path), "error": str(exc)})
@@ -367,9 +474,12 @@ def main(argv=None):
 
         per_image_rows.append({
             "image": image_path.name,
+            "modality": result["modality"].kind,
+            "instrument": result["modality"].instrument,
             "num_particles": stats.get("num_particles", 0),
             "nm_per_px": result["scale"]["nm_per_px"],
             "scale_method": result["scale"]["method"],
+            "analysable_fraction": result["region"]["analysable_fraction"],
             "area_mean": stats.get("area_mean"),
             "area_median": stats.get("area_median"),
             "area_std": stats.get("area_std"),
@@ -385,6 +495,9 @@ def main(argv=None):
             "shape": result["image_shape"],
             "scale": result["scale"],
             "crop": result["crop"],
+            "modality": result["modality"].to_dict(),
+            "region": result["region"],
+            "dark_particles": result["dark_particles"],
             "mask_index": result["mask_index"],
             "mask_inverted": result["mask_inverted"],
             "mask_foreground_fraction": result["mask_foreground_fraction"],
@@ -394,8 +507,10 @@ def main(argv=None):
         })
 
         note = f"  ⚠️  {scale_warning}" if scale_warning else ""
-        print(f"    {stats.get('num_particles', 0)} particles, "
-              f"scale={result['scale']['method']}{note}")
+        blocked = 1 - result["region"]["analysable_fraction"]
+        blocked_note = f", {100 * blocked:.0f}% blocked" if blocked > 0.005 else ""
+        print(f"    {result['modality'].kind}: {stats.get('num_particles', 0)} particles, "
+              f"scale={result['scale']['method']}{blocked_note}{note}")
 
     per_particle = pd.DataFrame(per_particle_rows)
     per_image = pd.DataFrame(per_image_rows)
@@ -425,6 +540,10 @@ def main(argv=None):
             "crop_percent": args.crop_percent,
             "scale_method": args.scale_method,
             "scale_nm_per_px": args.scale_nm_per_px,
+            "modality": args.modality,
+            "particles": args.particles,
+            "max_nm_per_px": args.max_nm_per_px,
+            "min_nm_per_px": args.min_nm_per_px,
         },
         "images": image_records,
         "outputs": ["particles.csv", "per_image_summary.csv", *plots],
@@ -434,7 +553,12 @@ def main(argv=None):
         json.dump(provenance, handle, indent=2)
 
     failed = sum(1 for record in image_records if "error" in record)
+    skipped = sum(1 for record in image_records if "skipped" in record)
+    kinds = per_image["modality"].value_counts().to_dict() if not per_image.empty else {}
+    breakdown = ", ".join(f"{count} {kind}" for kind, count in sorted(kinds.items()))
     print(f"\nDone. {len(per_image)} image(s) analysed"
+          + (f" ({breakdown})" if breakdown else "")
+          + (f", {skipped} skipped" if skipped else "")
           + (f", {failed} failed" if failed else "")
           + f", {len(per_particle)} particles total.")
     print(f"Wrote {args.output}/particles.csv, per_image_summary.csv, run.json"
