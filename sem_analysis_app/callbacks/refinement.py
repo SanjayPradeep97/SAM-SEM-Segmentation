@@ -276,10 +276,13 @@ def set_click_mode(mode):
 
     # Return appropriate status message and visibility for point refine controls
     mode_messages = {
-        "delete": "🗑️ DELETE mode: Click particles to remove them",
-        "add": "➕ ADD mode: Click empty areas to add new particles",
-        "merge": "🔗 MERGE mode: Click multiple touching particles to merge them",
-        "point_refine": "🎯 POINT REFINE mode: Add positive/negative points to refine or create particles"
+        "delete": "🚫 Remove — click any particle that isn't one. "
+                  "Clicking background does nothing.",
+        "add": "➕ Add — click something SAM missed; it segments what you clicked.",
+        "merge": "🔗 Merge — click two or more pieces that are really one particle.",
+        "point_refine": "🎯 Redraw — click to include, switch to exclude to cut "
+                        "away. Start on a particle to fix it, on background to "
+                        "draw a new one.",
     }
 
     # Show point refine controls only in point_refine mode

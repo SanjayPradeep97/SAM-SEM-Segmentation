@@ -62,12 +62,14 @@ from .callbacks import (
 )
 
 # The refinement tools, as (value, label). The value is what the callbacks
-# already understand; the label is what a person should read.
+# already understand; the label is what a person reads. Kept to one word so they
+# fit the rail on one line — what each does is spelled out in the status line
+# when it is picked, where it is read at the moment it matters.
 REFINE_MODES = [
-    ("delete", "🚫  Remove — click a particle that isn't one"),
-    ("add", "➕  Add — click something SAM missed"),
-    ("merge", "🔗  Merge — click two or more pieces of one particle"),
-    ("point_refine", "🎯  Redraw — mark what to include and exclude"),
+    ("delete", "🚫  Remove"),
+    ("add", "➕  Add"),
+    ("merge", "🔗  Merge"),
+    ("point_refine", "🎯  Redraw"),
 ]
 
 APP_CSS = """
@@ -355,6 +357,7 @@ def create_interface():
                         click_mode_radio = gr.Radio(
                             choices=[(label, value) for value, label in REFINE_MODES],
                             value="delete", label="Tool",
+                            info="Clicks queue up; nothing changes until Apply",
                         )
 
                         with gr.Group(visible=False) as point_refine_controls:
