@@ -1,64 +1,118 @@
 """
 Gradio interface definition: tabs, controls and event wiring.
+
+Five tabs, in the order the work happens: set up, choose an image, settle the
+frame, find the particles, read the numbers.
+
+Segmentation and refinement share a tab because they are one task — you judge a
+mask by correcting it, and splitting them meant hopping between tabs for every
+image in a folder of hundreds. Scale lives on exactly one tab for the same
+reason it did before: two places to set it meant two answers.
 """
 import gradio as gr
 
 from sem_particle_analysis import discover_checkpoints
 from .callbacks.scale_tab import UNITS
 
-
 from .callbacks import (
-    auto_process_current_image,
+    # setup + gallery
+    initialize_sam,
+    load_images_from_folder,
+    resume_session,
     restore_session,
+    select_image_from_gallery,
+    # scale and frame
     apply_two_points,
+    clear_crop_override,
     clear_scale,
     confirm_scale,
+    frame_header,
     live_point_readout,
     prepare_scale_tab,
     read_box_scale,
     set_canvas_mode,
+    set_crop_override,
     set_modality,
     set_particle_polarity,
-
-    save_and_next,
-    skip_to_next,
-    adjust_crop,
-    apply_manual_scale,
+    # segmentation + refinement
+    segment_with_sam,
+    select_mask_and_analyze,
     apply_refinement_changes,
-    check_and_remove_duplicates,
     clear_all_particles,
     clear_edge_particles,
     clear_pending_changes,
-    delete_result_row,
-    detect_scale_clicked,
-    export_results,
-    get_session_summary,
     handle_image_click,
-    handle_scale_click,
-    initialize_sam,
-    load_images_from_folder,
     reset_point_refine,
-    reset_scale_clicks,
-    resume_session,
-    save_current_results,
-    segment_with_sam,
-    select_image_from_gallery,
-    select_mask_and_analyze,
     set_click_mode,
     set_min_particle_size,
     set_point_type,
-    set_scale_mode,
     toggle_particle_numbers,
     undo_last_action,
+    # workflow
+    open_current_image,
+    save_and_next,
+    skip_to_next,
+    # results
+    check_and_remove_duplicates,
+    delete_result_row,
+    export_results,
+    get_session_summary,
+    save_current_results,
     update_histogram_plots,
 )
 
+# The refinement tools, as (value, label). The value is what the callbacks
+# already understand; the label is what a person should read.
+REFINE_MODES = [
+    ("delete", "🚫  Remove — click a particle that isn't one"),
+    ("add", "➕  Add — click something SAM missed"),
+    ("merge", "🔗  Merge — click two or more pieces of one particle"),
+    ("point_refine", "🎯  Redraw — mark what to include and exclude"),
+]
+
 APP_CSS = """
-.tabs {font-size: 16px; font-weight: 500;}
-.tab-nav button {padding: 12px 24px;}
+/* ---- layout ------------------------------------------------------------ */
+.tabs {font-size: 15px;}
+.tab-nav button {padding: 10px 20px; font-weight: 500;}
+
 /* Data channels between the scale canvas and Python. They must exist in the
    DOM for client code to write to them, so they are hidden rather than absent. */
 .scale-channel {display: none !important;}
+
+/* The frame header: one line that says where you are, always in view. */
+.frame-header {
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--background-fill-secondary);
+    border: 1px solid var(--border-color-primary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+.frame-header p {margin: 0;}
+
+/* Tool rail: keep it compact so the image gets the room. */
+.tool-rail .gr-form, .tool-rail .gr-box {border: none; background: transparent;}
+.tool-rail label {font-size: 13px;}
+.tool-rail .gr-button {width: 100%;}
+
+/* The image being worked on is the point of the page. */
+.work-image img {
+    border-radius: 8px;
+    background: #0d0d0d;
+}
+
+/* Numbers read better tabular. */
+.gr-dataframe table {font-variant-numeric: tabular-nums; font-size: 13px;}
+
+/* A step heading inside a rail. */
+.step-title {
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    opacity: .65;
+    margin: 2px 0 6px;
+}
 """
 
 
@@ -69,35 +123,38 @@ def create_interface():
     Theme and CSS are applied at launch (see __main__), which is where Gradio 6
     expects them; passing them to Blocks is deprecated.
     """
-    with gr.Blocks(title="SAM-based SEM Particle Analysis") as app:
+    with gr.Blocks(title="Particle Analysis — SEM & TEM") as app:
 
-        gr.Markdown("# 🔬 SAM-based SEM Particle Analysis")
-        gr.Markdown("Automated particle segmentation and analysis for scanning electron microscopy images using Segment Anything Model")
+        gr.Markdown("# 🔬 Particle Analysis for SEM & TEM")
+        gr.Markdown(
+            "Size and count particles in electron micrographs. Scale, instrument "
+            "and analysable area are worked out per image; you judge the mask and "
+            "correct it."
+        )
 
         with gr.Tabs() as tabs:
 
-            # ================================================================
-            # TAB 1: Setup
-            # ================================================================
+            # ============================================================
+            # TAB 0: Setup
+            # ============================================================
             with gr.Tab("⚙️ Setup", id=0):
-                gr.Markdown("## Initialize SAM Model and Load Images")
-
                 with gr.Row():
-                    with gr.Column(scale=2):
+                    with gr.Column():
+                        gr.Markdown("### 1 · Model", elem_classes=["step-title"])
                         # A dropdown of checkpoints already on disk, rather than an
                         # upload widget: Gradio copies uploaded files into its
                         # cache, which meant shuffling 2.4 GB on every start.
                         # The architecture is implied by the checkpoint, so there
-                        # is no separate Model Type control to contradict it —
-                        # a mismatched pair fails deep inside torch with an
+                        # is no separate Model Type control to contradict it — a
+                        # mismatched pair fails deep inside torch with an
                         # unhelpful shape error.
                         _checkpoints = discover_checkpoints()
                         sam_file = gr.Dropdown(
-                            label="SAM Checkpoint",
+                            label="SAM checkpoint",
                             # Plain path strings, not (label, value) pairs: with
                             # allow_custom_value the dropdown hands back what is
-                            # displayed, so a pretty label arrives at the callback
-                            # instead of the path and the load fails.
+                            # displayed, so a pretty label would arrive at the
+                            # callback instead of the path.
                             choices=[str(p) for p in _checkpoints],
                             value=str(_checkpoints[0]) if _checkpoints else None,
                             allow_custom_value=True,
@@ -106,94 +163,109 @@ def create_interface():
                                  "None found — run python download_sam_weights.py, "
                                  "or paste a path.",
                         )
-                        init_sam_btn = gr.Button("⚡ Initialize SAM Model", variant="primary", size="lg")
+                        init_sam_btn = gr.Button("⚡ Load model", variant="primary",
+                                                 size="lg")
                         init_status = gr.Textbox(label="Status", interactive=False)
 
-                    with gr.Column(scale=2):
-                        gr.Markdown("**Load Images**")
-                        gr.Markdown("Select one or more images. If you select multiple images from the same folder, all images in that folder will be loaded.")
+                    with gr.Column():
+                        gr.Markdown("### 2 · Images", elem_classes=["step-title"])
+                        gr.Markdown(
+                            "Select the images from **one sample folder**. "
+                            "Results are written next to them, so each folder "
+                            "keeps its own CSV."
+                        )
                         file_input = gr.File(
-                            label="Select Image Files",
+                            label="Image files",
                             file_count="multiple",
                             file_types=[".tif", ".tiff", ".png", ".jpg", ".jpeg"],
-                            type="filepath"
+                            type="filepath",
                         )
-
-                        load_btn = gr.Button("📁 Load Images", variant="primary", size="lg", interactive=False)
+                        load_btn = gr.Button("📁 Load images", variant="primary",
+                                             size="lg", interactive=False)
                         load_status = gr.Textbox(label="Status", interactive=False)
 
-                        gr.Markdown("---")
-                        gr.Markdown("**Resume Previous Session**")
-                        gr.Markdown("Upload a previous results CSV to continue adding to it.")
-                        resume_csv_input = gr.File(
-                            label="Select Results CSV",
-                            file_count="single",
-                            file_types=[".csv"],
-                            type="filepath"
-                        )
-                        resume_btn = gr.Button("📂 Resume Session", variant="secondary")
-                        resume_status = gr.Textbox(label="Resume Status", interactive=False)
-
-            # ================================================================
-            # TAB 2: Image Gallery
-            # ================================================================
-            with gr.Tab("🖼️ Image Gallery", id=1):
-                gr.Markdown("## Image Gallery - Click to Select")
-                gr.Markdown("✅ = Processed | ⚪ = Not Processed")
-
-                gallery = gr.Gallery(
-                    label="All Images",
-                    columns=5,
-                    rows=4,
-                    height=800,
-                    object_fit="contain",
-                    show_label=True,
-                    # The preview overlay has no reliable way out and blocks
-                    # the workflow; clicking a thumbnail should select it.
-                    allow_preview=False,
-                    type="pil"  # Explicitly set to PIL Image type for cross-platform compatibility
-                )
-
-                selected_image_info = gr.Textbox(label="Selected Image", interactive=False)
-
-
-            # ================================================================
-            # TAB 3: Scale
-            # ================================================================
-            with gr.Tab("📏 Scale", id=2):
-                gr.Markdown("## Establish the image scale")
-                gr.Markdown(
-                    "Every measurement is a pixel count times this one number, so "
-                    "it is worth getting right. Tier 1 runs automatically; only "
-                    "fall through to tier 2 or 3 if it fails."
-                )
-
-                tier1_status = gr.Textbox(
-                    label="Tier 1 — file metadata (automatic)", interactive=False, lines=2
-                )
-
-                with gr.Accordion("🔬 Frame — instrument, particle polarity, "
-                                  "analysable area", open=True):
+                with gr.Accordion("Resume a previous session", open=False):
                     gr.Markdown(
-                        "SEM and TEM need opposite handling. The instrument is read "
-                        "from the file where it says so; override it if the reading "
-                        "is wrong. Beam-blocked area — an aperture vignette, a grid "
-                        "bar — and any burned-in scale bar are left out of "
-                        "measurement, because they out-contrast the particles and "
-                        "would be counted instead of them."
+                        "Point at an earlier results CSV to keep adding to it. "
+                        "Images already in it come back ticked in the gallery."
+                    )
+                    resume_csv_input = gr.File(label="Results CSV",
+                                               file_count="single",
+                                               file_types=[".csv"], type="filepath")
+                    resume_btn = gr.Button("📂 Resume", variant="secondary")
+                    resume_status = gr.Textbox(label="Status", interactive=False)
+
+            # ============================================================
+            # TAB 1: Gallery
+            # ============================================================
+            with gr.Tab("🖼️ Gallery", id=1):
+                gr.Markdown("Click an image to start on it. ✅ done · ⚪ not yet")
+                gallery = gr.Gallery(
+                    label="Images",
+                    columns=6, rows=3, height=760,
+                    object_fit="contain", show_label=False,
+                    # The preview overlay has no reliable way out and blocks the
+                    # workflow; clicking a thumbnail should select it.
+                    allow_preview=False,
+                    type="pil",
+                )
+                selected_image_info = gr.Textbox(label="Selected", interactive=False)
+
+            # ============================================================
+            # TAB 2: Scale & Frame
+            # ============================================================
+            with gr.Tab("📏 Scale & Frame", id=2):
+                gr.Markdown(
+                    "Every measurement is a pixel count times the scale, so this "
+                    "is the one place it is set. Tier 1 runs by itself; fall "
+                    "through to 2 or 3 only when it fails."
+                )
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        tier1_status = gr.Textbox(
+                            label="Tier 1 — file metadata", interactive=False, lines=3
+                        )
+                    with gr.Column(scale=1):
+                        scale_summary = gr.Textbox(
+                            label="Scale in force", interactive=False, lines=3
+                        )
+                with gr.Row():
+                    confirm_scale_btn = gr.Button("✔️ Confirm scale", variant="primary")
+                    clear_scale_btn = gr.Button("✖️ Clear", variant="secondary")
+
+                with gr.Accordion("🔬 Frame — instrument, polarity, analysable area",
+                                  open=True):
+                    gr.Markdown(
+                        "SEM and TEM need opposite handling. The instrument is "
+                        "read from the file where it says so. Beam-blocked area — "
+                        "an aperture vignette, a grid bar — and any burned-in "
+                        "scale bar are left out of measurement, because they "
+                        "out-contrast the particles and would be counted instead."
                     )
                     with gr.Row():
                         modality_choice = gr.Dropdown(
                             choices=["auto", "SEM", "TEM"], value="auto",
-                            label="Instrument",
+                            label="Instrument", scale=1,
                         )
                         particle_choice = gr.Dropdown(
                             choices=["auto", "bright", "dark"], value="auto",
-                            label="Particles are",
-                            info="auto follows the instrument: bright for SEM, "
-                                 "dark for TEM",
+                            label="Particles are", scale=1,
+                            info="auto follows the instrument",
                         )
+                        with gr.Column(scale=1):
+                            crop_override = gr.Number(
+                                label="Trim from bottom (%)", value=None,
+                                minimum=0, maximum=40,
+                                info="Escape hatch — the databar is measured "
+                                     "automatically. 0 keeps the whole frame.",
+                            )
+                            with gr.Row():
+                                crop_apply_btn = gr.Button("Apply", size="sm")
+                                crop_auto_btn = gr.Button("Auto", size="sm")
                     frame_status = gr.Markdown("Load an image to detect the instrument.")
+
+                gr.Markdown("---")
 
                 with gr.Row():
                     with gr.Column(scale=3):
@@ -246,516 +318,292 @@ def create_interface():
                                                          variant="primary")
 
                         reset_canvas_btn = gr.Button("↺ Reset box / points", size="sm")
-                        tier_status = gr.Textbox(label="Result", interactive=False, lines=3)
+                        tier_status = gr.Textbox(label="Result", interactive=False,
+                                                 lines=3)
 
-                gr.Markdown("---")
-                scale_summary = gr.Textbox(
-                    label="Scale in force for this image", interactive=False, lines=4
-                )
-                with gr.Row():
-                    confirm_scale_btn = gr.Button("✔️ Confirm scale", variant="primary")
-                    clear_scale_btn = gr.Button("✖️ Clear scale", variant="secondary")
-
-            # ================================================================
-            # TAB 3: Processing
-            # ================================================================
-            with gr.Tab("🔍 Processing", id=3):
-                gr.Markdown("## Scale Detection and Segmentation")
-
-                current_image = gr.Image(
-                    label="",
-                    type="numpy"
-                )
+            # ============================================================
+            # TAB 3: Segment & Refine
+            # ============================================================
+            with gr.Tab("🔬 Segment & Refine", id=3):
+                header = gr.Markdown("### No image loaded\nPick one from the Gallery.",
+                                     elem_classes=["frame-header"])
 
                 with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### Step 1: Scale Detection")
-                        scale_mode_dropdown = gr.Dropdown(
-                            choices=["Metadata", "OCR", "Manual"],
-                            value="Metadata",
-                            label="Detection Mode",
-                            info="Metadata: TIFF tags | OCR: click box on image | Manual: click endpoints"
-                        )
-                        detect_btn = gr.Button("🔍 Detect Scale", variant="primary")
-                        crop_percent_slider = gr.Slider(
-                            minimum=0,
-                            maximum=20,
-                            value=7.0,
-                            step=0.5,
-                            label="Bottom Crop (%)",
-                            info="Adjust how much of the bottom to crop (removes scale bar / databar)"
-                        )
-                        scale_status = gr.Textbox(label="Status", interactive=False)
+                    # ---- tool rail --------------------------------------
+                    with gr.Column(scale=1, min_width=260,
+                                   elem_classes=["tool-rail"]):
 
-                        # OCR mode controls (hidden by default)
-                        with gr.Group(visible=False) as ocr_controls:
-                            gr.Markdown("**OCR Mode:** Click two opposite corners on the image to define the search box.")
-                            ocr_info = gr.Textbox(
-                                label="OCR Info",
-                                value="Click point 1 of 2...",
-                                interactive=False
-                            )
-                            ocr_reset_btn = gr.Button("Reset OCR Box", size="sm")
-
-                        # Manual mode controls (hidden by default)
-                        with gr.Group(visible=False) as manual_controls:
-                            gr.Markdown("**Manual Mode:** Click the left end of the scale bar, then the right end.")
-                            manual_info = gr.Textbox(
-                                label="Manual Info",
-                                value="Click point 1 of 2...",
-                                interactive=False
-                            )
-                            manual_um_input = gr.Number(
-                                label="Scale bar length (µm)",
-                                info="Enter the physical length of the scale bar in micrometers",
-                                precision=3,
-                                minimum=0.001,
-                                maximum=100000
-                            )
-                            manual_apply_btn = gr.Button("Apply Manual Scale", variant="primary")
-                            manual_reset_btn = gr.Button("Reset Points", size="sm")
-
-                    with gr.Column():
-                        gr.Markdown("### Step 2: Segmentation")
+                        gr.Markdown("Segment", elem_classes=["step-title"])
                         min_particle_size_slider = gr.Slider(
-                            minimum=5,
-                            maximum=100,
-                            value=30,
-                            step=1,
-                            label="Minimum Particle Size (pixels)",
-                            info="Particles smaller than this will be filtered out. Lower for small/low-mag images."
+                            minimum=5, maximum=200, value=30, step=1,
+                            label="Smallest particle (px)",
+                            info="Anything below this is noise",
                         )
-                        segment_btn = gr.Button("🤖 Segment with SAM", variant="primary", size="lg")
-                        segment_status = gr.Textbox(label="Status", interactive=False)
+                        segment_btn = gr.Button("🤖 Segment", variant="primary")
+                        mask_choice = gr.Radio(
+                            choices=["Option 1", "Option 2", "Option 3"],
+                            value="Option 1", label="Candidate",
+                            info="Ranked best-first by contrast",
+                        )
+                        analyze_btn = gr.Button("✓ Use this candidate",
+                                                variant="primary")
+                        segment_status = gr.Textbox(label="", interactive=False,
+                                                    lines=2, show_label=False)
 
-                mask_viz = gr.Image(label="")
-
-                with gr.Row():
-                    mask_choice = gr.Radio(
-                        choices=["Option 1", "Option 2", "Option 3"],
-                        value="Option 1",
-                        label="Select Best Mask",
-                        info="Ranked best-first by contrast; see captions above"
-                    )
-                    analyze_btn = gr.Button("✓ Select & Analyze", variant="primary", size="lg")
-
-                analysis_status = gr.Textbox(label="Analysis Status", interactive=False)
-
-            # ================================================================
-            # TAB 4: Refinement
-            # ================================================================
-            with gr.Tab("✏️ Refinement", id=4):
-                gr.Markdown("## Interactive Particle Refinement")
-                gr.Markdown("**Select a mode and click on the image to refine particle segmentation**")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
+                        gr.Markdown("---")
+                        gr.Markdown("Correct", elem_classes=["step-title"])
                         click_mode_radio = gr.Radio(
-                            choices=["delete", "add", "merge", "point_refine"],
-                            value="delete",
-                            label="Refinement Mode",
-                            info="Select how you want to interact with particles"
+                            choices=[(label, value) for value, label in REFINE_MODES],
+                            value="delete", label="Tool",
                         )
 
-                        gr.Markdown("""
-**Mode Descriptions:**
-- **Delete**: Click particles to remove them
-- **Add**: Click empty areas to add new particles
-- **Merge**: Click multiple touching particles to merge them
-- **Point Refine**: Click to add positive/negative points to refine a selected particle
-                        """)
-
-                    with gr.Column(scale=2):
-                        click_mode_status = gr.Textbox(
-                            label="Current Mode",
-                            value="🗑️ DELETE mode: Click particles to remove them",
-                            interactive=False
-                        )
-
-                        # Point refine controls (only visible in point_refine mode)
                         with gr.Group(visible=False) as point_refine_controls:
-                            gr.Markdown("**Point Refinement Controls**")
                             point_type_radio = gr.Radio(
-                                choices=["positive", "negative"],
-                                value="positive",
-                                label="Point Type",
-                                info="Positive = include, Negative = exclude"
+                                choices=[("✓ include", "positive"),
+                                         ("✗ exclude", "negative")],
+                                value="positive", label="Next point",
                             )
-                            reset_points_btn = gr.Button("Reset Points", size="sm")
+                            reset_points_btn = gr.Button("Reset points", size="sm")
 
-                # Visualization controls
-                show_numbers_checkbox = gr.Checkbox(
-                    label="Show Particle Numbers",
-                    value=True,
-                    info="Uncheck to hide numbers for better visibility of small particles"
-                )
+                        with gr.Row():
+                            apply_btn = gr.Button("✓ Apply", variant="primary")
+                            undo_btn = gr.Button("↩️ Undo", variant="secondary")
+                        clear_pending_btn = gr.Button("Discard pending clicks",
+                                                      variant="secondary", size="sm")
 
-                refine_viz = gr.Image(label="", type="numpy")
+                        with gr.Accordion("Bulk cleanup", open=False):
+                            edge_buffer = gr.Slider(
+                                minimum=0, maximum=50, value=10, step=1,
+                                label="Edge buffer (px)",
+                            )
+                            clear_edges_btn = gr.Button("🧹 Drop edge particles",
+                                                        variant="secondary", size="sm")
+                            clear_all_btn = gr.Button("🗑️ Clear all — start blank",
+                                                      variant="stop", size="sm")
 
-                with gr.Row():
-                    apply_btn = gr.Button("✓ Apply Changes", variant="primary", size="lg")
-                    clear_pending_btn = gr.Button("Clear Pending", variant="secondary")
-                    undo_btn = gr.Button("↩️ Undo Last Action", variant="secondary")
+                        show_numbers_checkbox = gr.Checkbox(
+                            label="Show particle numbers", value=True,
+                        )
 
-                with gr.Row():
-                    edge_buffer = gr.Slider(
-                        minimum=0,
-                        maximum=50,
-                        value=10,
-                        step=1,
-                        label="Edge Buffer (pixels)"
-                    )
-                    with gr.Column():
-                        clear_edges_btn = gr.Button("🧹 Clear Edge Particles", variant="secondary")
-                        clear_all_btn = gr.Button("🗑️ Clear All Particles", variant="stop")
+                    # ---- the image --------------------------------------
+                    with gr.Column(scale=3):
+                        refine_viz = gr.Image(label="", type="numpy", show_label=False,
+                                              elem_classes=["work-image"], height=620)
+                        refine_status = gr.Textbox(label="", interactive=False,
+                                                   show_label=False, lines=1)
 
-                refine_status = gr.Textbox(label="Status", interactive=False)
-
-                with gr.Accordion("Particle Measurements", open=True):
-                    refine_results = gr.Dataframe(label="Particle Measurements")
-
-                gr.Markdown("---")
-                gr.Markdown("### Save Results")
-                gr.Markdown(
-                    "**Save & Next** records this image and immediately loads and "
-                    "pre-processes the following one — the normal way to work "
-                    "through a folder."
-                )
-                with gr.Row():
-                    save_next_btn = gr.Button("✅ Save & Next Image", variant="primary", size="lg")
-                    save_btn = gr.Button("💾 Save (stay here)", variant="secondary", size="lg")
-                    skip_btn = gr.Button("⏭️ Skip (don't save)", variant="secondary")
-                save_status = gr.Textbox(label="Status", interactive=False)
-
-            # ================================================================
-            # TAB 5: Results & Export
-            # ================================================================
-            with gr.Tab("💾 Results & Export", id=5):
-                gr.Markdown("## Current Image Analysis Summary")
-
-                with gr.Row():
-                    with gr.Column():
-                        gr.Markdown("### Particle Measurements")
-                        current_results = gr.Dataframe(label="All Particles")
-
-                    with gr.Column():
-                        gr.Markdown("### Summary Statistics")
-                        current_stats = gr.Dataframe(label="Statistics")
+                        with gr.Accordion("Candidate masks", open=False):
+                            mask_viz = gr.Image(label="", show_label=False)
+                            analysis_status = gr.Textbox(label="", interactive=False,
+                                                         show_label=False)
 
                 gr.Markdown("---")
-                gr.Markdown("## Session Summary (All Images)")
-
-                refresh_btn = gr.Button("🔄 Refresh Summary")
-
-                # Two-column layout for session statistics
                 with gr.Row():
-                    with gr.Column():
-                        summary_progress = gr.Markdown("No results yet")
-                    with gr.Column():
-                        summary_particle_stats = gr.Markdown("No particle statistics yet")
+                    save_next_btn = gr.Button("✅ Save & next", variant="primary",
+                                              size="lg", scale=2)
+                    save_btn = gr.Button("💾 Save, stay here", variant="secondary")
+                    skip_btn = gr.Button("⏭️ Skip", variant="secondary")
+                save_status = gr.Textbox(label="", interactive=False, show_label=False)
 
-                session_table = gr.Dataframe(label="All Processed Images")
+                with gr.Accordion("Measurements for this image", open=False):
+                    refine_results = gr.Dataframe(label="", show_label=False)
 
+            # ============================================================
+            # TAB 4: Results
+            # ============================================================
+            with gr.Tab("💾 Results", id=4):
+                gr.Markdown("### This image", elem_classes=["step-title"])
                 with gr.Row():
-                    delete_row_dropdown = gr.Dropdown(
-                        label="Select Row to Delete",
-                        choices=[],
-                        value=None,
-                        interactive=True,
-                        info="Choose a file to delete from results"
-                    )
-                    delete_row_btn = gr.Button("❌ Delete Selected Row", variant="stop")
-
-                delete_row_status = gr.Textbox(label="Delete Status", interactive=False)
-
-                with gr.Row():
-                    remove_duplicates_btn = gr.Button("🧹 Remove Duplicate Entries", variant="secondary")
-                    duplicates_status = gr.Textbox(label="Duplicate Removal Status", interactive=False)
+                    current_results = gr.Dataframe(label="Particles")
+                    current_stats = gr.Dataframe(label="Summary")
 
                 gr.Markdown("---")
-                gr.Markdown("## Export Results")
-
+                gr.Markdown("### Whole session", elem_classes=["step-title"])
+                refresh_btn = gr.Button("🔄 Refresh", variant="primary")
                 with gr.Row():
-                    export_btn = gr.Button("📥 Export All Results", variant="primary")
-                    export_file = gr.File(label="Download CSV")
+                    summary_progress = gr.Markdown("No results yet")
+                    summary_particle_stats = gr.Markdown("No particle statistics yet")
+                session_table = gr.Dataframe(label="Processed images")
 
-            # ================================================================
-            # TAB 6: Plotting & Graphs
-            # ================================================================
-            with gr.Tab("📊 Plotting & Graphs", id=6):
-                gr.Markdown("## Particle Size Distribution")
-                gr.Markdown("Visualize the distribution of particle sizes with histograms")
+                with gr.Accordion("Fix up the results file", open=False):
+                    with gr.Row():
+                        delete_row_dropdown = gr.Dropdown(
+                            label="Row to delete", choices=[], value=None,
+                            interactive=True,
+                        )
+                        delete_row_btn = gr.Button("❌ Delete row", variant="stop")
+                    delete_row_status = gr.Textbox(label="", interactive=False,
+                                                   show_label=False)
+                    with gr.Row():
+                        remove_duplicates_btn = gr.Button("🧹 Remove duplicates",
+                                                          variant="secondary")
+                        duplicates_status = gr.Textbox(label="", interactive=False,
+                                                       show_label=False)
 
+                gr.Markdown("---")
                 with gr.Row():
-                    update_plots_btn = gr.Button("🔄 Update Plots", variant="primary", size="lg")
-                    plot_status = gr.Textbox(label="Status", interactive=False)
+                    export_btn = gr.Button("📥 Export all results", variant="primary")
+                    export_file = gr.File(label="Download")
 
-                histogram_plot = gr.Image(label="", type="numpy")
+            # ============================================================
+            # TAB 5: Plots
+            # ============================================================
+            with gr.Tab("📊 Plots", id=5):
+                gr.Markdown("Size distribution across everything saved this session.")
+                with gr.Row():
+                    update_plots_btn = gr.Button("🔄 Update", variant="primary")
+                    plot_status = gr.Textbox(label="", interactive=False,
+                                             show_label=False)
+                histogram_plot = gr.Image(label="", type="numpy", show_label=False)
 
         # ================================================================
-        # Event Handlers
+        # Event wiring
         # ================================================================
 
-        # Setup tab
-        init_sam_btn.click(
-            initialize_sam,
-            inputs=[sam_file],
-            outputs=[init_status, load_btn]
-        )
+        # Opening an image does the same thing however it was opened: settle the
+        # scale and frame, then segment. Kept as one list so the three entry
+        # points cannot drift apart.
+        OPEN_OUTPUTS = [scale_image_in, tier1_status, scale_summary, point_readout,
+                        frame_status, header, mask_viz, segment_status, mask_choice]
+        RELOAD_CANVAS = "() => { window.SCALE && window.SCALE.load(); }"
 
-        load_btn.click(
-            load_images_from_folder,
-            inputs=[file_input],
-            outputs=[load_status, gallery]
-        )
-
-        resume_btn.click(
-            resume_session,
-            inputs=[resume_csv_input],
-            outputs=[resume_status, gallery, load_status]
-        )
-
-        # Gallery tab. Selecting an image immediately detects scale and produces
-        # ranked candidates, so the analyst lands on masks to judge rather than
-        # on buttons to press.
-        gallery.select(
-            select_image_from_gallery,
-            outputs=[current_image, selected_image_info, tabs, click_mode_radio]
-        ).then(
-            prepare_scale_tab,
-            outputs=[scale_image_in, tier1_status, scale_summary, point_readout,
-                     frame_status]
-        ).then(
-            None, js="() => { window.SCALE && window.SCALE.load(); }"
-        ).then(
-            auto_process_current_image,
-            outputs=[scale_status, current_image, crop_percent_slider,
-                     mask_viz, segment_status, mask_choice]
-        )
-
+        # ---- Setup ----
+        init_sam_btn.click(initialize_sam, inputs=[sam_file],
+                           outputs=[init_status, load_btn])
+        load_btn.click(load_images_from_folder, inputs=[file_input],
+                       outputs=[load_status, gallery])
+        resume_btn.click(resume_session, inputs=[resume_csv_input],
+                         outputs=[resume_status, gallery, load_status])
 
         # A refresh reconnects to the same process-wide session, so bring the
         # gallery back rather than showing an empty one.
         app.load(restore_session, outputs=[gallery, load_status])
 
-        # --- Scale tab ---
+        # ---- Gallery ----
+        gallery.select(
+            select_image_from_gallery,
+            outputs=[refine_viz, selected_image_info, tabs, click_mode_radio],
+        ).then(
+            open_current_image, outputs=OPEN_OUTPUTS,
+        ).then(None, js=RELOAD_CANVAS)
+
+        # ---- Scale & Frame ----
         canvas_mode.change(
-            set_canvas_mode,
-            inputs=[canvas_mode],
-            outputs=[tier2_controls, tier3_controls]
+            set_canvas_mode, inputs=[canvas_mode],
+            outputs=[tier2_controls, tier3_controls],
         ).then(
             None, inputs=[canvas_mode],
             js="(m) => { window.SCALE && window.SCALE.setMode("
-               "m.startsWith('Tier 3') ? 'points' : 'box'); }"
+               "m.startsWith('Tier 3') ? 'points' : 'box'); }",
         )
 
-        read_box_btn.click(
-            read_box_scale,
-            inputs=[scale_box_out],
-            outputs=[tier_status, scale_summary]
-        )
+        read_box_btn.click(read_box_scale, inputs=[scale_box_out],
+                           outputs=[tier_status, scale_summary]).then(
+            frame_header, outputs=[header])
 
         # Live feedback as the two points are placed.
-        scale_points_out.change(
-            live_point_readout,
-            inputs=[scale_points_out],
-            outputs=[point_readout]
-        )
+        scale_points_out.change(live_point_readout, inputs=[scale_points_out],
+                                outputs=[point_readout])
 
         apply_points_btn.click(
-            apply_two_points,
-            inputs=[scale_points_out, bar_value, bar_unit],
-            outputs=[tier_status, scale_summary]
-        )
+            apply_two_points, inputs=[scale_points_out, bar_value, bar_unit],
+            outputs=[tier_status, scale_summary]).then(frame_header, outputs=[header])
 
-        reset_canvas_btn.click(
-            None, js="() => { window.SCALE && window.SCALE.reset(); }"
-        )
+        reset_canvas_btn.click(None, js="() => { window.SCALE && window.SCALE.reset(); }")
 
-        confirm_scale_btn.click(
-            confirm_scale, outputs=[tier_status, scale_summary]
-        )
-
-        clear_scale_btn.click(
-            clear_scale, outputs=[tier_status, scale_summary]
-        )
+        confirm_scale_btn.click(confirm_scale,
+                                outputs=[tier_status, scale_summary]).then(
+            frame_header, outputs=[header])
+        clear_scale_btn.click(clear_scale,
+                              outputs=[tier_status, scale_summary]).then(
+            frame_header, outputs=[header])
 
         # An override re-derives the frame's geometry, since the instrument
         # decides whether a databar is expected and which way round particles are.
-        modality_choice.change(
-            set_modality, inputs=[modality_choice], outputs=[frame_status]
-        )
-        particle_choice.change(
-            set_particle_polarity, inputs=[particle_choice], outputs=[frame_status]
-        )
+        modality_choice.change(set_modality, inputs=[modality_choice],
+                               outputs=[frame_status]).then(frame_header,
+                                                            outputs=[header])
+        particle_choice.change(set_particle_polarity, inputs=[particle_choice],
+                               outputs=[frame_status]).then(frame_header,
+                                                            outputs=[header])
+        crop_apply_btn.click(set_crop_override, inputs=[crop_override],
+                             outputs=[frame_status, header])
+        crop_auto_btn.click(clear_crop_override,
+                            outputs=[frame_status, header]).then(
+            lambda: gr.update(value=None), outputs=[crop_override])
 
-        # Processing tab — scale detection mode
-        scale_mode_dropdown.change(
-            set_scale_mode,
-            inputs=[scale_mode_dropdown],
-            outputs=[ocr_controls, manual_controls, scale_status, current_image, ocr_info, manual_info]
-        )
-
-        # Click handler on processing image for OCR / Manual modes
-        current_image.select(
-            handle_scale_click,
-            outputs=[current_image, scale_status, ocr_info, manual_info]
-        )
-
-        detect_btn.click(
-            detect_scale_clicked,
-            outputs=[scale_status, current_image, crop_percent_slider]
-        )
-
-        crop_percent_slider.change(
-            adjust_crop,
-            inputs=[crop_percent_slider],
-            outputs=[scale_status, current_image]
-        )
-
-        # OCR mode reset
-        ocr_reset_btn.click(
-            reset_scale_clicks,
-            outputs=[current_image, ocr_info]
-        )
-
-        # Manual mode controls
-        manual_apply_btn.click(
-            apply_manual_scale,
-            inputs=[manual_um_input],
-            outputs=[scale_status, current_image, manual_info]
-        )
-
-        manual_reset_btn.click(
-            reset_scale_clicks,
-            outputs=[current_image, manual_info]
-        )
-
-        min_particle_size_slider.change(
-            set_min_particle_size,
-            inputs=[min_particle_size_slider],
-            outputs=[segment_status]
-        )
-
-        segment_btn.click(
-            segment_with_sam,
-            outputs=[mask_viz, segment_status, mask_choice]
-        )
-
+        # ---- Segment & Refine ----
+        min_particle_size_slider.change(set_min_particle_size,
+                                        inputs=[min_particle_size_slider],
+                                        outputs=[segment_status])
+        segment_btn.click(segment_with_sam,
+                          outputs=[mask_viz, segment_status, mask_choice])
         analyze_btn.click(
-            select_mask_and_analyze,
-            inputs=[mask_choice],
-            outputs=[refine_viz, refine_results, analysis_status, current_results, current_stats]
-        )
+            select_mask_and_analyze, inputs=[mask_choice],
+            outputs=[refine_viz, refine_results, analysis_status,
+                     current_results, current_stats],
+        ).then(frame_header, outputs=[header])
 
-        # Refinement tab
-        click_mode_radio.change(
-            set_click_mode,
-            inputs=[click_mode_radio],
-            outputs=[click_mode_status, point_refine_controls]
-        )
-
-        point_type_radio.change(
-            set_point_type,
-            inputs=[point_type_radio],
-            outputs=[refine_status]
-        )
-
-        reset_points_btn.click(
-            reset_point_refine,
-            outputs=[refine_viz, refine_status]
-        )
-
-        show_numbers_checkbox.change(
-            toggle_particle_numbers,
-            inputs=[show_numbers_checkbox],
-            outputs=[refine_viz]
-        )
-
-        refine_viz.select(
-            handle_image_click,
-            outputs=[refine_viz, refine_status]
-        )
+        click_mode_radio.change(set_click_mode, inputs=[click_mode_radio],
+                                outputs=[refine_status, point_refine_controls])
+        point_type_radio.change(set_point_type, inputs=[point_type_radio],
+                                outputs=[refine_status])
+        reset_points_btn.click(reset_point_refine,
+                               outputs=[refine_viz, refine_status])
+        show_numbers_checkbox.change(toggle_particle_numbers,
+                                     inputs=[show_numbers_checkbox],
+                                     outputs=[refine_viz])
+        refine_viz.select(handle_image_click, outputs=[refine_viz, refine_status])
 
         apply_btn.click(
             apply_refinement_changes,
-            outputs=[refine_viz, refine_results, refine_status, current_results, current_stats]
-        )
+            outputs=[refine_viz, refine_results, refine_status,
+                     current_results, current_stats],
+        ).then(frame_header, outputs=[header])
 
-        clear_pending_btn.click(
-            clear_pending_changes,
-            outputs=[refine_viz, refine_status]
-        )
-
-        undo_btn.click(
-            undo_last_action,
-            outputs=[refine_viz, refine_results, refine_status]
-        )
+        clear_pending_btn.click(clear_pending_changes,
+                                outputs=[refine_viz, refine_status])
+        undo_btn.click(undo_last_action,
+                       outputs=[refine_viz, refine_results, refine_status]).then(
+            frame_header, outputs=[header])
 
         clear_edges_btn.click(
-            clear_edge_particles,
-            inputs=[edge_buffer],
-            outputs=[refine_viz, refine_results, refine_status, current_results, current_stats]
-        )
-
+            clear_edge_particles, inputs=[edge_buffer],
+            outputs=[refine_viz, refine_results, refine_status,
+                     current_results, current_stats],
+        ).then(frame_header, outputs=[header])
         clear_all_btn.click(
             clear_all_particles,
-            outputs=[refine_viz, refine_results, refine_status, current_results, current_stats]
-        )
+            outputs=[refine_viz, refine_results, refine_status,
+                     current_results, current_stats],
+        ).then(frame_header, outputs=[header])
 
-        # Plotting tab
-        update_plots_btn.click(
-            update_histogram_plots,
-            outputs=[histogram_plot, plot_status]
-        )
-
-        # Results tab
-        save_btn.click(
-            save_current_results,
-            outputs=[save_status, gallery]
-        )
+        # ---- Save and advance ----
+        save_btn.click(save_current_results, outputs=[save_status, gallery])
 
         save_next_btn.click(
             save_and_next,
-            outputs=[save_status, gallery, selected_image_info, current_image,
-                     scale_status, crop_percent_slider, mask_viz, segment_status,
-                     mask_choice, tabs, scale_image_in, tier1_status,
-                     scale_summary, point_readout, frame_status]
-        ).then(
-            None, js="() => { window.SCALE && window.SCALE.load(); }"
-        )
+            outputs=[save_status, gallery, selected_image_info] + OPEN_OUTPUTS,
+        ).then(None, js=RELOAD_CANVAS)
 
         skip_btn.click(
-            skip_to_next,
-            outputs=[selected_image_info, current_image, tabs, scale_image_in,
-                     tier1_status, scale_summary, point_readout, frame_status]
-        ).then(
-            None, js="() => { window.SCALE && window.SCALE.load(); }"
-        ).then(
-            auto_process_current_image,
-            outputs=[scale_status, current_image, crop_percent_slider,
-                     mask_viz, segment_status, mask_choice]
-        )
+            skip_to_next, outputs=[selected_image_info] + OPEN_OUTPUTS,
+        ).then(None, js=RELOAD_CANVAS)
 
-        refresh_btn.click(
-            get_session_summary,
-            outputs=[session_table, summary_progress, summary_particle_stats, delete_row_dropdown]
-        )
+        # ---- Results ----
+        refresh_btn.click(get_session_summary,
+                          outputs=[session_table, summary_progress,
+                                   summary_particle_stats, delete_row_dropdown])
+        delete_row_btn.click(delete_result_row, inputs=[delete_row_dropdown],
+                             outputs=[session_table, summary_progress,
+                                      summary_particle_stats, delete_row_dropdown,
+                                      delete_row_status])
+        remove_duplicates_btn.click(check_and_remove_duplicates,
+                                    outputs=[session_table, duplicates_status])
+        export_btn.click(export_results, outputs=[export_file])
 
-        delete_row_btn.click(
-            delete_result_row,
-            inputs=[delete_row_dropdown],
-            outputs=[session_table, summary_progress, summary_particle_stats, delete_row_dropdown, delete_row_status]
-        )
-
-        remove_duplicates_btn.click(
-            check_and_remove_duplicates,
-            outputs=[session_table, duplicates_status]
-        )
-
-        export_btn.click(
-            export_results,
-            outputs=[export_file]
-        )
+        # ---- Plots ----
+        update_plots_btn.click(update_histogram_plots,
+                               outputs=[histogram_plot, plot_status])
 
     return app
