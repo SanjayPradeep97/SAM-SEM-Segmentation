@@ -60,12 +60,13 @@ def create_image_gallery():
 
 def select_image_from_gallery(evt: gr.SelectData):
     """
-    Open the clicked image and go to the tab where the work happens.
+    Open the clicked image and go to Scale & Frame.
 
-    Straight to Segment & Refine rather than by way of Scale: scale is settled
-    automatically on nearly every frame and is reported in that tab's header, so
-    a forced stop costs more than it catches over a folder of hundreds. The
-    Scale tab is there when the header says something needs looking at.
+    Scale first, because every measurement is a pixel count times that number
+    and it is worth a glance before anything is measured with it. It also puts
+    the canvas on screen at the moment the image arrives, which is when it can
+    be drawn — landing on Segment & Refine instead left the scale tab's canvas
+    unmounted, so it was blank and could not be dragged on when finally opened.
     """
     if not state.image_paths:
         return None, "No images loaded", gr.Tabs(selected=1), "delete"
@@ -77,7 +78,7 @@ def select_image_from_gallery(evt: gr.SelectData):
         state.current_image = load_image(state.image_paths[state.current_index])
         filename = os.path.basename(state.image_paths[state.current_index])
         info = f"Image {state.current_index + 1} / {len(state.image_paths)}: {filename}"
-        return state.current_image, info, gr.Tabs(selected=3), "delete"
+        return state.current_image, info, gr.Tabs(selected=2), "delete"
     except Exception as e:
         return None, f"❌ Error loading image: {str(e)}", gr.Tabs(selected=1), "delete"
 

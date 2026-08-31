@@ -15,6 +15,7 @@ import pytest
 
 from sem_analysis_app.state import AppState
 from sem_particle_analysis import ParticleAnalyzer
+from sem_particle_analysis import scale_calibration as sc
 from synthetic import make_disk_mask
 
 
@@ -114,3 +115,105 @@ class TestResetClearsHistory:
         state.reset_image_state()
         assert state.modality is None
         assert state.analysable_region is None
+
+
+class TestScaleDoesNotOutliveItsImage:
+    """
+    A calibration belongs to one image.
+
+    scale_calibration was never declared on AppState and never cleared by
+    reset_image_state — it was attached on first use and read back through
+    getattr. So opening a new image cleared scale_info but left the previous
+    image's calibration in place, and the frame header and panel, which read the
+    calibration, went on reporting the old nm/px.
+    """
+
+    def test_it_is_declared_not_conjured(self):
+        # Present from the start, so clearing it is possible at all.
+        assert AppState().scale_calibration is None
+
+    def test_opening_a_new_image_clears_it(self):
+        state = AppState()
+        state.scale_calibration = sc.ScaleCalibration(nm_per_px=2.5, method="metadata")
+        state.scale_info = state.scale_calibration.to_dict()
+
+        state.reset_image_state()
+
+        assert state.scale_calibration is None
+        assert state.scale_info is None
+
+    def test_scale_info_and_calibration_are_cleared_together(self):
+        # They disagreeing is what made the stale reading invisible: scale_info
+        # said "no scale", the calibration said 2.5 nm/px, and the header read
+        # the calibration.
+        state = AppState()
+        state.scale_calibration = sc.ScaleCalibration(nm_per_px=2.5, method="metadata")
+        state.scale_info = state.scale_calibration.to_dict()
+        state.reset_image_state()
+        assert (state.scale_calibration is None) == (state.scale_info is None)
+
+
+class TestScaleIsRememberedPerImage:
+    @pytest.fixture
+    def state(self):
+        state = AppState()
+        state.image_paths = [r"C:\images\a.tif", r"C:\images\b.tif"]
+        state.current_index = 0
+        return state
+
+    def test_a_calibration_comes_back_for_the_same_image(self, state):
+        cal = sc.from_two_points((0, 0), (200, 0), 500, "nm")
+        state.remember_scale(cal)
+        state.reset_image_state()
+        assert state.recall_scale() is cal
+
+    def test_another_image_does_not_inherit_it(self, state):
+        state.remember_scale(sc.from_two_points((0, 0), (200, 0), 500, "nm"))
+        state.current_index = 1
+        assert state.recall_scale() is None
+
+    def test_each_image_keeps_its_own(self, state):
+        first = sc.from_two_points((0, 0), (200, 0), 500, "nm")
+        state.remember_scale(first)
+        state.current_index = 1
+        second = sc.from_two_points((0, 0), (100, 0), 500, "nm")
+        state.remember_scale(second)
+
+        state.current_index = 0
+        assert state.recall_scale() is first
+        state.current_index = 1
+        assert state.recall_scale() is second
+        assert first.nm_per_px != second.nm_per_px
+
+    def test_clearing_forgets_it_so_the_next_visit_detects_afresh(self, state):
+        state.remember_scale(sc.from_two_points((0, 0), (200, 0), 500, "nm"))
+        state.forget_scale()
+        assert state.recall_scale() is None
+
+    def test_confirming_is_reflected_in_what_was_stored(self, state):
+        # confirm_scale mutates the calibration in place; the stored one is the
+        # same object, so it must see the change rather than a stale copy.
+        cal = sc.ScaleCalibration(nm_per_px=2.5, method="box_ocr")
+        state.remember_scale(cal)
+        assert state.recall_scale().trustworthy is False
+        cal.confirmed = True
+        assert state.recall_scale().trustworthy is True
+
+    def test_remembering_without_an_image_is_harmless(self):
+        state = AppState()
+        state.remember_scale(sc.ScaleCalibration(nm_per_px=2.5, method="metadata"))
+        assert state.scale_by_image == {}
+        assert state.recall_scale() is None
+
+    def test_an_index_off_the_end_recalls_nothing(self, state):
+        state.current_index = 99
+        assert state.current_path() is None
+        assert state.recall_scale() is None
+
+    def test_the_memory_survives_moving_between_images(self, state):
+        cal = sc.from_two_points((0, 0), (200, 0), 500, "nm")
+        state.remember_scale(cal)
+        for index in (1, 0, 1, 0):
+            state.current_index = index
+            state.reset_image_state()
+        assert state.recall_scale() is cal
