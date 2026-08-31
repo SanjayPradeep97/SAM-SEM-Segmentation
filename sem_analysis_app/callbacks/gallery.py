@@ -59,11 +59,17 @@ def create_image_gallery():
 
 
 def select_image_from_gallery(evt: gr.SelectData):
-    """Handle image selection from gallery and switch to processing tab."""
+    """
+    Open the clicked image and go to the tab where the work happens.
+
+    Straight to Segment & Refine rather than by way of Scale: scale is settled
+    automatically on nearly every frame and is reported in that tab's header, so
+    a forced stop costs more than it catches over a folder of hundreds. The
+    Scale tab is there when the header says something needs looking at.
+    """
     if not state.image_paths:
         return None, "No images loaded", gr.Tabs(selected=1), "delete"
 
-    # evt.index gives us which image was clicked
     state.current_index = evt.index
     state.reset_image_state()
 
@@ -71,9 +77,7 @@ def select_image_from_gallery(evt: gr.SelectData):
         state.current_image = load_image(state.image_paths[state.current_index])
         filename = os.path.basename(state.image_paths[state.current_index])
         info = f"Image {state.current_index + 1} / {len(state.image_paths)}: {filename}"
-
-        # Return image, info, switch to processing tab (id=2), and reset mode radio to "delete"
-        return state.current_image, info, gr.Tabs(selected=2), "delete"
+        return state.current_image, info, gr.Tabs(selected=3), "delete"
     except Exception as e:
         return None, f"❌ Error loading image: {str(e)}", gr.Tabs(selected=1), "delete"
 

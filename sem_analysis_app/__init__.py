@@ -10,6 +10,19 @@ Layout:
 Run it with ``python -m sem_analysis_app`` from the repository root.
 """
 
-from .ui import create_interface
-
 __all__ = ["create_interface"]
+
+
+def __getattr__(name):
+    """
+    Build the interface only when it is asked for.
+
+    Importing it eagerly pulls in Gradio, which meant the application state — a
+    plain object with no UI dependencies of its own — could not be imported, or
+    tested, without the whole web stack present.
+    """
+    if name == "create_interface":
+        from .ui import create_interface
+
+        return create_interface
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -120,13 +120,19 @@ def _apply_frame_geometry(calibration):
     if image is None:
         return
 
-    try:
-        databar = _detector().detect_databar(image, _raw_metadata()) or {}
-    except Exception:
-        databar = {}
-
     height = image.shape[0]
-    bar_height = int(databar.get("databar_height") or 0)
+    override = getattr(state, "crop_override", None)
+
+    if override is not None:
+        # An explicit choice, including 0 meaning "keep the whole frame".
+        databar = {"has_databar": override > 0}
+        bar_height = int(round(height * override / 100.0))
+    else:
+        try:
+            databar = _detector().detect_databar(image, _raw_metadata()) or {}
+        except Exception:
+            databar = {}
+        bar_height = int(databar.get("databar_height") or 0)
 
     if databar.get("has_databar") and 0 < bar_height < height:
         state.cropped_image = image[: height - bar_height].copy()
@@ -208,6 +214,71 @@ def frame_summary():
     if state.crop_percent:
         lines.append(f"Databar trimmed: {state.crop_percent:.2f}% off the bottom.")
     return "\n\n".join(lines)
+
+
+def frame_header():
+    """
+    One-line summary of the current frame, for the working tab's header.
+
+    Everything an analyst needs to know they are on the right image, working at
+    the right scale, without leaving the tab they are clicking in.
+    """
+    if state.current_image is None:
+        return "### No image loaded\nPick one from the Gallery."
+
+    total = len(state.image_paths) or 1
+    name = (os.path.basename(str(state.image_paths[state.current_index]))
+            if state.image_paths else "image")
+
+    cal = getattr(state, "scale_calibration", None)
+    if cal is None:
+        scale = "⚠️ no scale — sizes in pixels"
+    else:
+        scale = f"{cal.nm_per_px:.4g} nm/px"
+        if not cal.trustworthy:
+            scale += " (unconfirmed)"
+
+    kind = getattr(state, "modality", None)
+    bits = [f"**{name}**", f"{state.current_index + 1} of {total}", scale]
+    if kind is not None:
+        bits.append(kind.label)
+
+    info = getattr(state, "region_info", None) or {}
+    blocked = 1 - info.get("analysable_fraction", 1.0)
+    if blocked > 0.005:
+        bits.append(f"{100 * blocked:.0f}% excluded")
+
+    count = len(state.analyzer.regions) if state.analyzer is not None else None
+    if count is not None:
+        bits.append(f"**{count} particles**")
+
+    warning = cal.warning if cal is not None else None
+    line = "  ·  ".join(bits)
+    return f"{line}\n\n⚠️ {warning}" if warning else line
+
+
+def set_crop_override(percent):
+    """
+    Override how much is trimmed off the bottom of the frame.
+
+    The databar height is measured automatically and is exact when the
+    instrument recorded it, so this is an escape hatch rather than a routine
+    control: use it when a frame's databar is not detected, or is detected on a
+    frame that has none.
+
+    Args:
+        percent: Percent of frame height to trim, or 0 to keep the whole frame,
+            or None to go back to measuring it.
+    """
+    state.crop_override = None if percent is None or percent < 0 else float(percent)
+    if state.current_image is not None:
+        _apply_frame_geometry(getattr(state, "scale_calibration", None))
+    return frame_summary(), frame_header()
+
+
+def clear_crop_override():
+    """Go back to measuring the databar."""
+    return set_crop_override(None)
 
 
 def set_modality(choice):
