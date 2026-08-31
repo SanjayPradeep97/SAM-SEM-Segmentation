@@ -168,6 +168,9 @@ def _adopt(calibration):
     """
     state.scale_calibration = calibration
     state.scale_info = calibration.to_dict()
+    # Kept against this image, so returning to it does not repeat the work — and
+    # in particular does not throw away a bar the analyst read by hand.
+    state.remember_scale(calibration)
     _apply_frame_geometry(calibration)
     return calibration
 
@@ -320,15 +323,29 @@ def prepare_scale_tab():
         tuple: (canvas_payload, tier1_status, summary, points_hint, frame_summary)
     """
     if state.current_image is None:
+        # Nothing to calibrate — and drop any calibration left over from the
+        # image before, which would otherwise still be reported as this one's.
+        state.scale_calibration = None
+        state.scale_info = None
         return "", "No image loaded", _status_lines(), "", frame_summary()
 
     state.scale_calibration = None
     state.scale_info = None
 
     payload = _image_payload(state.current_image)
-    path = (state.image_paths[state.current_index]
-            if state.image_paths and state.current_index < len(state.image_paths)
-            else None)
+    path = state.current_path()
+
+    # Already settled on an earlier visit: restore it rather than detecting
+    # again. Re-running detection would quietly discard a bar that was read by
+    # hand, which is the one case where the stored answer is the only good one.
+    remembered = state.recall_scale()
+    if remembered is not None:
+        _adopt(remembered)
+        name = os.path.basename(str(path)) if path else "image"
+        return (payload,
+                f"✅ Scale already established for {name} "
+                f"({remembered.method_label}) — press Clear to redo it.",
+                _status_lines(), "", frame_summary())
 
     try:
         calibration = sc.from_metadata(_detector(), state.current_image, path)
@@ -440,9 +457,15 @@ def confirm_scale():
 
 
 def clear_scale():
-    """Discard the calibration and start again."""
+    """
+    Discard the calibration and start again.
+
+    Forgets the stored one too, so the next visit to this image detects afresh
+    rather than restoring the reading that was just rejected.
+    """
     state.scale_calibration = None
     state.scale_info = None
+    state.forget_scale()
     return "Scale cleared", _status_lines()
 
 

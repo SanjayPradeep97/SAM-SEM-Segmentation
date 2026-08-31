@@ -30,6 +30,12 @@ class AppState:
         self.current_image = None
         self.cropped_image = None
         self.scale_info = None
+        # The resolved ScaleCalibration for the image on screen. Declared here
+        # rather than being attached on first use, so that reset_image_state can
+        # clear it: it used to outlive the image it belonged to, and since the
+        # header and the frame panel read it, opening a new image could show the
+        # previous one's nm/px.
+        self.scale_calibration = None
         self.masks = None
         self.scores = None
         # Ranked candidates from ParticleSegmenter.rank_candidates, each carrying
@@ -55,6 +61,11 @@ class AppState:
         # means measure it, which is right whenever the instrument recorded a
         # scan height. An escape hatch, not a routine control.
         self.crop_override = None
+        # Scale already established, keyed by image path: {path: ScaleCalibration}.
+        # Session-wide, so it survives moving between images. Without it, coming
+        # back to a frame whose bar was read by hand meant doing that work again,
+        # and there was no way to tell a restored calibration from a fresh guess.
+        self.scale_by_image = {}
         self.selected_mask_index = None
         self.analyzer = None
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
@@ -93,6 +104,9 @@ class AppState:
         self.current_image = None
         self.cropped_image = None
         self.scale_info = None
+        # Cleared with everything else that belongs to one image. A calibration
+        # that survived into the next image would be silently wrong.
+        self.scale_calibration = None
         self.ocr_click_points = []
         self.manual_click_points = []
         self.masks = None
@@ -155,6 +169,29 @@ class AppState:
         self.analyzer.mask = self.mask_history.pop()
         self.analyzer._relabel_and_filter()
         return True
+
+    def current_path(self):
+        """Path of the image on screen, or None."""
+        if not self.image_paths or not 0 <= self.current_index < len(self.image_paths):
+            return None
+        return str(self.image_paths[self.current_index])
+
+    def remember_scale(self, calibration):
+        """Keep this image's calibration so returning to it does not redo the work."""
+        path = self.current_path()
+        if path and calibration is not None:
+            self.scale_by_image[path] = calibration
+
+    def recall_scale(self):
+        """The calibration established for the image on screen, or None."""
+        path = self.current_path()
+        return self.scale_by_image.get(path) if path else None
+
+    def forget_scale(self):
+        """Drop the stored calibration, so the next visit detects afresh."""
+        path = self.current_path()
+        if path:
+            self.scale_by_image.pop(path, None)
 
     def mark_processed(self, index, num_particles):
         """Mark an image as processed."""
