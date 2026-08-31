@@ -11,7 +11,9 @@ from .gallery import (
     select_image_from_gallery,
 )
 from .scale_tab import (
+    accept_from_work_tab,
     apply_two_points,
+    check_outputs,
     clear_crop_override,
     clear_scale,
     confirm_scale,
@@ -62,7 +64,9 @@ from .results import (
 
 __all__ = [
     "apply_refinement_changes",
+    "accept_from_work_tab",
     "apply_two_points",
+    "check_outputs",
     "auto_process_current_image",
     "check_and_remove_duplicates",
     "clear_all_particles",

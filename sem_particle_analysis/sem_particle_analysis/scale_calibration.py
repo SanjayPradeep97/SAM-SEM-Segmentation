@@ -230,3 +230,62 @@ def _normalise_box(box, width, height):
     x1 = int(max(0, min(x1, width)))
     y1 = int(max(0, min(y1, height)))
     return x0, y0, x1, y1
+
+
+def search_box(calibration):
+    """
+    The rectangle the scale bar was looked for in, as (x0, y0, x1, y1).
+
+    Args:
+        calibration: A ``ScaleCalibration``, or None.
+
+    Returns:
+        tuple: Image pixel coordinates, or None when nothing was searched — a
+        calibration read from metadata never looked at the image at all.
+    """
+    extra = getattr(calibration, "extra", None) or {}
+
+    box = extra.get("box")
+    if box is not None and len(box) == 4:
+        x0, y0, x1, y1 = (int(round(float(v))) for v in box)
+        return (x0, y0, x1, y1)
+
+    found = extra.get("region")
+    if found is not None and len(found) == 4:
+        x0, y0, width, height = (int(round(float(v))) for v in found)
+        return (x0, y0, x0 + max(1, width), y0 + max(1, height))
+    return None
+
+
+def measured_span(calibration):
+    """
+    The two ends of what was actually measured, in image pixel coordinates.
+
+    This is the segment whose pixel length the printed value was divided by, so
+    it is the whole of the measurement that a number cannot show. A reading that
+    caught the bar's anti-aliased edge, stopped at a tick mark, or ran along a
+    rule beside the bar gives a plausible nm/px and a wrong dataset; drawn on the
+    image, all three are obvious at a glance.
+
+    Args:
+        calibration: A ``ScaleCalibration``, or None.
+
+    Returns:
+        tuple: ``((x0, y0), (x1, y1))``, or None when no bar was measured.
+        Metadata carries a pixel size directly and has no span.
+    """
+    extra = getattr(calibration, "extra", None) or {}
+
+    points = extra.get("points")
+    if points is not None and len(points) == 2:
+        (xa, ya), (xb, yb) = points
+        return ((float(xa), float(ya)), (float(xb), float(yb)))
+
+    coords = extra.get("line_coords")
+    box = search_box(calibration)
+    if coords is not None and len(coords) == 3 and box is not None:
+        # line_coords are relative to the crop the detector was handed; the box
+        # is where that crop sat in the frame.
+        left, right, row = (float(v) for v in coords)
+        return ((box[0] + left, box[1] + row), (box[0] + right, box[1] + row))
+    return None

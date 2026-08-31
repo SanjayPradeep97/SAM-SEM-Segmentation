@@ -217,3 +217,38 @@ class TestScaleIsRememberedPerImage:
             state.current_index = index
             state.reset_image_state()
         assert state.recall_scale() is cal
+
+
+class TestTheAcceptedScaleOutlivesTheImage:
+    """
+    Unlike a calibration, the yardstick belongs to the run.
+
+    It exists to answer "have I already agreed to a scale like this one?", which
+    is a question about the folder being worked through. Clearing it per image
+    would make every reading look like the first one and stop on all of them.
+    """
+
+    def test_accepting_records_the_number(self):
+        state = AppState()
+        state.accept_scale(sc.ScaleCalibration(nm_per_px=7.8125, method="box_ocr"))
+        assert state.scale_baseline == 7.8125
+
+    def test_opening_the_next_image_keeps_it(self):
+        state = AppState()
+        state.accept_scale(sc.ScaleCalibration(nm_per_px=7.8125, method="box_ocr"))
+        state.reset_image_state()
+        assert state.scale_baseline == 7.8125
+        assert state.scale_calibration is None
+
+    def test_a_later_acceptance_replaces_it(self):
+        # A change of magnification part way through a folder is asked about
+        # once, and then the new value is what the rest are judged against.
+        state = AppState()
+        state.accept_scale(sc.ScaleCalibration(nm_per_px=7.8125, method="box_ocr"))
+        state.accept_scale(sc.ScaleCalibration(nm_per_px=19.6, method="box_ocr"))
+        assert state.scale_baseline == 19.6
+
+    def test_accepting_nothing_is_harmless(self):
+        state = AppState()
+        state.accept_scale(None)
+        assert state.scale_baseline is None
