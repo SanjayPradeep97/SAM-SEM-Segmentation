@@ -51,6 +51,10 @@ class AppState:
         self.modality_choice = "auto"
         # "auto" | "bright" | "dark": likewise for particle polarity.
         self.particle_choice = "auto"
+        # Percent of frame height to trim, overriding the measured databar. None
+        # means measure it, which is right whenever the instrument recorded a
+        # scan height. An escape hatch, not a routine control.
+        self.crop_override = None
         self.selected_mask_index = None
         self.analyzer = None
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
@@ -76,8 +80,13 @@ class AppState:
         self.point_refine_logits = None  # SAM logits for iterative refinement
         self.point_type = "positive"  # "positive" or "negative" for point_refine mode
 
-        # Undo history
-        self.undo_history = []  # Stack of previous states (labeled_mask, regions)
+        # Undo history for individual clicks, before they are applied.
+        self.undo_history = []
+        # Undo history for applied edits: a stack of mask snapshots taken just
+        # before each Apply. Without it an Apply is a point of no return, and
+        # since the analyst applies constantly to see the result, one wrong
+        # Apply would mean re-segmenting the image from scratch.
+        self.mask_history = []
 
     def reset_image_state(self):
         """Reset processing state for new image."""
@@ -114,6 +123,38 @@ class AppState:
         self.point_refine_logits = None
         self.point_type = "positive"
         self.undo_history = []
+        self.mask_history = []
+
+    # Applied edits kept for undo. Each snapshot is a full-frame boolean mask, so
+    # a deep stack costs real memory on 2048px frames; this is plenty to recover
+    # from a mistake without holding the whole session.
+    MAX_MASK_HISTORY = 20
+
+    def snapshot_mask(self):
+        """
+        Record the current mask so an applied edit can be undone.
+
+        Called immediately before an edit is committed. Does nothing when there
+        is no analysis yet.
+        """
+        if self.analyzer is None or self.analyzer.mask is None:
+            return
+        self.mask_history.append(self.analyzer.mask.copy())
+        if len(self.mask_history) > self.MAX_MASK_HISTORY:
+            self.mask_history.pop(0)
+
+    def restore_mask(self):
+        """
+        Roll back to the mask as it was before the last applied edit.
+
+        Returns:
+            bool: True if a snapshot was restored, False if there was none.
+        """
+        if self.analyzer is None or not self.mask_history:
+            return False
+        self.analyzer.mask = self.mask_history.pop()
+        self.analyzer._relabel_and_filter()
+        return True
 
     def mark_processed(self, index, num_particles):
         """Mark an image as processed."""

@@ -297,7 +297,9 @@ def apply_refinement_changes(progress=gr.Progress()):
         changes_made = False
         status_messages = []
 
-        # Note: State is already saved on each click, no need to save here
+        # Snapshot the mask first, so this Apply can be undone. Applying is the
+        # only irreversible step in the loop otherwise, and it happens often.
+        state.snapshot_mask()
 
         # Apply deletions
         if state.pending_deletes:
@@ -364,9 +366,13 @@ def apply_refinement_changes(progress=gr.Progress()):
             changes_made = True
 
         if not changes_made:
+            # Nothing happened, so the snapshot taken above is dead weight.
+            if state.mask_history:
+                state.mask_history.pop()
             return gr.update(), gr.update(), "No changes to apply", gr.update(), gr.update()
 
-        # Clear undo history since changes have been applied
+        # The per-click history described edits that are now committed; undo from
+        # here on rolls back the whole Apply, using the snapshot above.
         state.undo_history = []
 
         progress(0.9, desc="Updating visualization...")
@@ -409,7 +415,21 @@ def undo_last_action():
             return gr.update(), gr.update(), "❌ No analysis available"
 
         if not state.undo_history:
-            return gr.update(), gr.update(), "❌ No actions to undo"
+            # No un-applied clicks left, so step back over the last Apply
+            # instead. Without this, applying was a point of no return.
+            if state.restore_mask():
+                particle_viz = create_particle_visualization(
+                    state.cropped_image,
+                    state.analyzer.labeled_mask,
+                    state.analyzer.regions,
+                    show_labels=state.show_particle_numbers,
+                )
+                measurements = state.analyzer.get_measurements(in_nm=True)
+                return (particle_viz, create_results_dataframe(measurements),
+                        f"↩️ Undid the last applied change — back to "
+                        f"{len(state.analyzer.regions)} particles "
+                        f"({len(state.mask_history)} further steps available)")
+            return gr.update(), gr.update(), "❌ Nothing left to undo"
 
         # Restore previous pending state (before last click)
         previous_state = state.undo_history.pop()
@@ -481,6 +501,7 @@ def clear_edge_particles(buffer_size):
         n_removed = len(labels_to_remove)
 
         if n_removed > 0:
+            state.snapshot_mask()
             state.analyzer.delete_particles(labels_to_remove)
 
         # Update visualization
@@ -523,6 +544,8 @@ def clear_all_particles():
         n_removed = len(all_labels)
 
         if n_removed > 0:
+            # The most destructive action in the app; it must be recoverable.
+            state.snapshot_mask()
             state.analyzer.delete_particles(all_labels)
 
         # Clear all pending state too

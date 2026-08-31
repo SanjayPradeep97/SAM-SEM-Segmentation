@@ -283,3 +283,86 @@ class TestSummaryStatistics:
         assert stats["diameter_mean"] == pytest.approx(np.mean(measurements["diameters"]))
         assert stats["diameter_min"] <= stats["diameter_median"] <= stats["diameter_max"]
         assert stats["area_mean"] == pytest.approx(np.mean(measurements["areas"]))
+
+
+class TestClickHitTesting:
+    """
+    Turning a click into a particle.
+
+    Every refinement mode goes through find_particle_at_point, so its behaviour
+    decides whether clicking is precise or a lottery. It used to return the
+    nearest centroid unconditionally, which meant a click in open background
+    still selected a particle — a misclick silently queued a real particle for
+    deletion — and a click on a C-shaped or elongated region could select a
+    smaller neighbour, because a centroid need not lie inside its own particle.
+    """
+
+    @pytest.fixture
+    def scene(self):
+        """Three disks plus a C-shape whose centroid falls in its own hollow."""
+        mask = np.zeros((400, 600), dtype=np.uint8)
+        yy, xx = np.mgrid[0:400, 0:600]
+        for cx, cy, r in ((80, 80, 25), (300, 90, 25), (520, 80, 25)):
+            mask[(xx - cx) ** 2 + (yy - cy) ** 2 <= r**2] = 1
+        mask[250:330, 100:130] = 1     # spine
+        mask[250:280, 100:260] = 1     # top arm
+        mask[300:330, 100:260] = 1     # bottom arm
+
+        analyzer = ParticleAnalyzer(min_size=30)
+        analyzer.analyze_mask(mask, remove_border=False)
+        return analyzer
+
+    def test_the_c_shape_centroid_really_is_outside_it(self, scene):
+        # The premise of the old bug. If this stops holding the scene is no
+        # longer exercising the case that mattered.
+        big = max(scene.regions, key=lambda r: r.area)
+        row, column = (int(round(v)) for v in big.centroid)
+        assert scene.labeled_mask[row, column] != big.label
+
+    def test_clicking_a_particle_selects_that_particle(self, scene):
+        for region in scene.regions:
+            ys, xs = np.where(scene.labeled_mask == region.label)
+            middle = len(xs) // 2
+            _r, _i, label = scene.find_particle_at_point(int(xs[middle]), int(ys[middle]))
+            assert label == region.label
+
+    @pytest.mark.parametrize("x,y", [(590, 390), (10, 390), (300, 200)])
+    def test_clicking_open_background_selects_nothing(self, scene, x, y):
+        assert scene.find_particle_at_point(x, y) == (None, None, None)
+
+    def test_a_near_miss_still_hits(self, scene):
+        # Aiming at a thin object on a scaled-down view deserves some latitude.
+        ys, xs = np.where(scene.labeled_mask == 1)
+        _r, _i, label = scene.find_particle_at_point(int(xs.max()) + 6, int(np.median(ys)))
+        assert label == 1
+
+    def test_a_far_miss_does_not(self, scene):
+        ys, xs = np.where(scene.labeled_mask == 1)
+        assert scene.find_particle_at_point(
+            int(xs.max()) + 40, int(np.median(ys))) == (None, None, None)
+
+    def test_tolerance_zero_demands_an_exact_hit(self, scene):
+        ys, xs = np.where(scene.labeled_mask == 1)
+        y = int(np.median(ys))
+        assert scene.find_particle_at_point(int(xs.max()) + 3, y, tolerance=0)[2] is None
+        assert scene.find_particle_at_point(int(xs.max()) - 3, y, tolerance=0)[2] == 1
+
+    def test_the_nearest_particle_wins_a_near_miss(self, scene):
+        # Between two particles, latitude must not pick the further one.
+        mask = np.zeros((200, 300), dtype=np.uint8)
+        mask[90:110, 40:60] = 1
+        mask[90:110, 100:120] = 1
+        analyzer = ParticleAnalyzer(min_size=30)
+        analyzer.analyze_mask(mask, remove_border=False)
+        left = analyzer.labeled_mask[100, 50]
+        _r, _i, label = analyzer.find_particle_at_point(65, 100)   # 5px right of left box
+        assert label == left
+
+    def test_a_click_outside_the_image_selects_nothing(self, scene):
+        assert scene.find_particle_at_point(-5, 10) == (None, None, None)
+        assert scene.find_particle_at_point(10, 9999) == (None, None, None)
+
+    def test_no_particles_means_no_selection(self):
+        analyzer = ParticleAnalyzer(min_size=30)
+        analyzer.analyze_mask(np.zeros((50, 50), dtype=np.uint8), remove_border=False)
+        assert analyzer.find_particle_at_point(25, 25) == (None, None, None)

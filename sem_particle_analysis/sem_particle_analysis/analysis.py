@@ -405,29 +405,80 @@ class ParticleAnalyzer:
         print(f"Added particle. New count: {len(self.regions)}")
         return len(self.regions)
 
-    def find_particle_at_point(self, x, y):
+    # How far from a particle a click may land and still count as hitting it.
+    # Generous enough to forgive aiming at a thin object on a scaled-down view,
+    # tight enough that a click in open background hits nothing.
+    CLICK_TOLERANCE_PX = 12
+
+    def find_particle_at_point(self, x, y, tolerance=None):
         """
-        Find the particle region nearest to a given point.
+        Find the particle the user clicked on.
+
+        The pixel under the cursor decides, and only if nothing is there does
+        this fall back to the nearest particle within ``tolerance``. A click in
+        open background selects nothing at all.
+
+        This used to return the nearest centroid unconditionally, which had two
+        consequences on a dense frame. A click in empty space still selected a
+        particle, so a misclick silently queued a real one for deletion with no
+        way to notice. And a centroid is not necessarily inside its own particle
+        — for a C-shaped or elongated region, which is what SAM produces on
+        entangled objects, it often is not — so clicking such a particle could
+        select a smaller neighbour whose centroid happened to be closer.
 
         Args:
-            x (float): X coordinate
-            y (float): Y coordinate
+            x (float): X coordinate, in image pixels.
+            y (float): Y coordinate, in image pixels.
+            tolerance (float, optional): Search radius in pixels for the
+                near-miss fallback. Defaults to ``CLICK_TOLERANCE_PX``; pass 0 to
+                require an exact hit.
 
         Returns:
-            tuple: (region, index, label) or (None, None, None) if no particles
+            tuple: (region, index, label), or (None, None, None) when the click
+            is not on or near any particle.
         """
-        if not self.regions:
+        if not self.regions or self.labeled_mask is None:
             return None, None, None
 
-        # Calculate distances to all centroids
-        centroids = np.array([[r.centroid[1], r.centroid[0]] for r in self.regions])
-        distances = np.sum((centroids - np.array([x, y])) ** 2, axis=1)
+        tolerance = self.CLICK_TOLERANCE_PX if tolerance is None else tolerance
+        height, width = self.labeled_mask.shape
+        column, row = int(round(x)), int(round(y))
+        if not (0 <= column < width and 0 <= row < height):
+            return None, None, None
 
-        # Find nearest
-        idx = int(np.argmin(distances))
-        region = self.regions[idx]
+        by_label = {region.label: (index, region)
+                    for index, region in enumerate(self.regions)}
 
-        return region, idx, region.label
+        # Directly on a particle: that is the one, whatever else is nearby.
+        hit = int(self.labeled_mask[row, column])
+        if hit in by_label:
+            index, region = by_label[hit]
+            return region, index, region.label
+
+        if tolerance <= 0:
+            return None, None, None
+
+        # Near miss: the closest particle whose own pixels come within tolerance,
+        # measured to the particle itself rather than to its centroid.
+        radius = int(np.ceil(tolerance))
+        top, bottom = max(0, row - radius), min(height, row + radius + 1)
+        left, right = max(0, column - radius), min(width, column + radius + 1)
+        window = self.labeled_mask[top:bottom, left:right]
+
+        best = None
+        for label in np.unique(window):
+            label = int(label)
+            if label not in by_label:
+                continue
+            ys, xs = np.where(window == label)
+            distance = np.min(np.hypot((ys + top) - row, (xs + left) - column))
+            if distance <= tolerance and (best is None or distance < best[0]):
+                best = (distance, label)
+
+        if best is None:
+            return None, None, None
+        index, region = by_label[best[1]]
+        return region, index, region.label
 
     def get_summary_statistics(self):
         """
