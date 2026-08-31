@@ -216,7 +216,7 @@ def create_interface():
             # ============================================================
             # TAB 2: Scale & Frame
             # ============================================================
-            with gr.Tab("📏 Scale & Frame", id=2) as scale_frame_tab:
+            with gr.Tab("📏 Scale & Frame", id=2):
                 gr.Markdown(
                     "Every measurement is a pixel count times the scale, so this "
                     "is the one place it is set. Tier 1 runs by itself; fall "
@@ -481,12 +481,13 @@ def create_interface():
                         frame_status, header, mask_viz, segment_status, mask_choice]
         RELOAD_CANVAS = "() => { window.SCALE && window.SCALE.load(); }"
 
-        # Gradio unmounts the panel of an inactive tab, so while the analyst is on
-        # Segment & Refine there is no canvas and no channel for the scale image to
-        # be drawn into: calling load() then does nothing, and the tab was blank
-        # when they finally opened it. Draw when the tab is actually mounted. The
-        # payload is held server-side, so it is still there to read.
-        scale_frame_tab.select(None, js=RELOAD_CANVAS)
+        # Nothing here re-draws the scale canvas on a tab change. Gradio unmounts
+        # an inactive tab's panel and builds a fresh canvas when it is shown
+        # again, and a Tab's select event does not fire in a way this can hook —
+        # measured, not assumed. scale_canvas.js watches for a canvas it has not
+        # wired and for a payload it has not drawn, so it recovers by itself. The
+        # RELOAD_CANVAS calls below remain because they are free when the tab
+        # happens to be mounted; they are not what makes it work.
 
         # ---- Setup ----
         init_sam_btn.click(initialize_sam, inputs=[sam_file],

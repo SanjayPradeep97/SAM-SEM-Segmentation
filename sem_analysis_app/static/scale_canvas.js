@@ -367,8 +367,63 @@
     },
   };
 
-  // The canvas arrives with the Gradio app, so wait for it.
-  const poll = setInterval(function () {
-    if (canvas()) { window.SCALE.attach(); clearInterval(poll); }
-  }, 200);
+  /* ---------- staying alive across tab remounts ----------
+   *
+   * Gradio unmounts the panel of an inactive tab and builds a fresh one when it
+   * is shown again, so the canvas this code wired up is thrown away and
+   * replaced by a blank element with no listeners. Wiring once at startup left
+   * the canvas inert the moment the analyst visited any other tab: nothing drew
+   * on it and no drag did anything.
+   *
+   * Python-side events are no help — a Tab's select event does not fire in a way
+   * this can hook, and a callback that pushes the image runs while the panel is
+   * unmounted, when there is no element to draw into. So watch instead: keep
+   * checking for a canvas that has not been wired, and for a payload we have not
+   * drawn yet.
+   */
+  let lastPayload = null;
+  let fittedFor = 0;          // parent width the current fit was computed against
+
+  function ensureCanvas() {
+    const c = canvas();
+    if (!c) return;
+
+    const fresh = !c.dataset.wired;
+    if (fresh) {
+      window.SCALE.attach();
+      fittedFor = 0;
+    }
+
+    const ta = document.querySelector("#scale_image_in textarea");
+    const payload = ta ? ta.value : null;
+
+    if (payload && payload !== lastPayload) {
+      // A different image: load it, which resets the box and points.
+      lastPayload = payload;
+      fittedFor = 0;
+      window.SCALE.load();
+      return;
+    }
+
+    if (!S.img) return;
+
+    // Layout settles after the element is built, and a panel that is still
+    // hidden reports no width at all — a fit computed then leaves the canvas
+    // stuck at its minimum. Re-fit whenever the room available differs from
+    // what the current fit was made for, which also covers the analyst
+    // resizing the window.
+    const room = c.parentElement ? c.parentElement.clientWidth : 0;
+    if (room && room !== fittedFor) {
+      fittedFor = room;
+      fitView();
+      draw();
+    } else if (fresh) {
+      // Newly built canvas, same image and same width: repaint it, keeping
+      // whatever box or points the analyst had already drawn.
+      draw();
+    }
+  }
+
+  setInterval(ensureCanvas, 250);
+  ensureCanvas();
 })();
