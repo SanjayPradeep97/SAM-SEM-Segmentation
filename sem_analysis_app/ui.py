@@ -216,7 +216,7 @@ def create_interface():
             # ============================================================
             # TAB 2: Scale & Frame
             # ============================================================
-            with gr.Tab("📏 Scale & Frame", id=2):
+            with gr.Tab("📏 Scale & Frame", id=2) as scale_frame_tab:
                 gr.Markdown(
                     "Every measurement is a pixel count times the scale, so this "
                     "is the one place it is set. Tier 1 runs by itself; fall "
@@ -256,15 +256,21 @@ def create_interface():
                             info="auto follows the instrument",
                         )
                         with gr.Column(scale=1):
-                            crop_override = gr.Number(
-                                label="Trim from bottom (%)", value=None,
-                                minimum=0, maximum=40,
-                                info="Escape hatch — the databar is measured "
-                                     "automatically. 0 keeps the whole frame.",
+                            # Off by default and hiding its input: an always-on
+                            # number field shows 0, and 0 means "keep the whole
+                            # frame" — one absent-minded Apply would leave an SEM
+                            # databar in shot to be measured as particles.
+                            crop_manual = gr.Checkbox(
+                                label="Override the databar trim", value=False,
+                                info="Off = measure it, which is exact whenever "
+                                     "the instrument recorded a scan height",
                             )
-                            with gr.Row():
-                                crop_apply_btn = gr.Button("Apply", size="sm")
-                                crop_auto_btn = gr.Button("Auto", size="sm")
+                            with gr.Row(visible=False) as crop_controls:
+                                crop_override = gr.Number(
+                                    label="Trim from bottom (%)", value=0,
+                                    minimum=0, maximum=40, scale=2,
+                                )
+                                crop_apply_btn = gr.Button("Apply", size="sm", scale=1)
                     frame_status = gr.Markdown("Load an image to detect the instrument.")
 
                 gr.Markdown("---")
@@ -389,16 +395,21 @@ def create_interface():
                         )
 
                     # ---- the image --------------------------------------
-                    with gr.Column(scale=3):
+                    with gr.Column(scale=4):
+                        # Open by default: choosing between the candidates is the
+                        # first thing that happens on this tab, and it cannot be
+                        # done without seeing them. Collapsed once one is chosen,
+                        # so the rest of the work gets the height.
+                        with gr.Accordion("Candidates — pick one, then Use it",
+                                          open=True) as candidate_panel:
+                            mask_viz = gr.Image(label="", show_label=False, height=300)
+                            analysis_status = gr.Textbox(label="", interactive=False,
+                                                         show_label=False, lines=1)
+
                         refine_viz = gr.Image(label="", type="numpy", show_label=False,
-                                              elem_classes=["work-image"], height=620)
+                                              elem_classes=["work-image"], height=760)
                         refine_status = gr.Textbox(label="", interactive=False,
                                                    show_label=False, lines=1)
-
-                        with gr.Accordion("Candidate masks", open=False):
-                            mask_viz = gr.Image(label="", show_label=False)
-                            analysis_status = gr.Textbox(label="", interactive=False,
-                                                         show_label=False)
 
                 gr.Markdown("---")
                 with gr.Row():
@@ -470,6 +481,13 @@ def create_interface():
                         frame_status, header, mask_viz, segment_status, mask_choice]
         RELOAD_CANVAS = "() => { window.SCALE && window.SCALE.load(); }"
 
+        # Gradio unmounts the panel of an inactive tab, so while the analyst is on
+        # Segment & Refine there is no canvas and no channel for the scale image to
+        # be drawn into: calling load() then does nothing, and the tab was blank
+        # when they finally opened it. Draw when the tab is actually mounted. The
+        # payload is held server-side, so it is still there to read.
+        scale_frame_tab.select(None, js=RELOAD_CANVAS)
+
         # ---- Setup ----
         init_sam_btn.click(initialize_sam, inputs=[sam_file],
                            outputs=[init_status, load_btn])
@@ -488,7 +506,8 @@ def create_interface():
             outputs=[refine_viz, selected_image_info, tabs, click_mode_radio],
         ).then(
             open_current_image, outputs=OPEN_OUTPUTS,
-        ).then(None, js=RELOAD_CANVAS)
+        ).then(  # a new image means new candidates to choose between
+            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
 
         # ---- Scale & Frame ----
         canvas_mode.change(
@@ -529,23 +548,35 @@ def create_interface():
         particle_choice.change(set_particle_polarity, inputs=[particle_choice],
                                outputs=[frame_status]).then(frame_header,
                                                             outputs=[header])
+        def _toggle_crop(manual):
+            """Show the trim field only while the override is on; off returns to
+            measuring the databar straight away rather than waiting for Apply."""
+            if manual:
+                return gr.update(visible=True), gr.update(), gr.update()
+            summary, head = clear_crop_override()
+            return gr.update(visible=False), summary, head
+
+        crop_manual.change(_toggle_crop, inputs=[crop_manual],
+                           outputs=[crop_controls, frame_status, header])
         crop_apply_btn.click(set_crop_override, inputs=[crop_override],
                              outputs=[frame_status, header])
-        crop_auto_btn.click(clear_crop_override,
-                            outputs=[frame_status, header]).then(
-            lambda: gr.update(value=None), outputs=[crop_override])
 
         # ---- Segment & Refine ----
         min_particle_size_slider.change(set_min_particle_size,
                                         inputs=[min_particle_size_slider],
                                         outputs=[segment_status])
-        segment_btn.click(segment_with_sam,
-                          outputs=[mask_viz, segment_status, mask_choice])
+        segment_btn.click(
+            segment_with_sam, outputs=[mask_viz, segment_status, mask_choice],
+        ).then(  # new candidates to look at, so open the panel again
+            lambda: gr.update(open=True), outputs=[candidate_panel])
+
         analyze_btn.click(
             select_mask_and_analyze, inputs=[mask_choice],
             outputs=[refine_viz, refine_results, analysis_status,
                      current_results, current_stats],
-        ).then(frame_header, outputs=[header])
+        ).then(frame_header, outputs=[header]).then(
+            # Chosen: give the height back to the frame being corrected.
+            lambda: gr.update(open=False), outputs=[candidate_panel])
 
         click_mode_radio.change(set_click_mode, inputs=[click_mode_radio],
                                 outputs=[refine_status, point_refine_controls])
@@ -587,11 +618,13 @@ def create_interface():
         save_next_btn.click(
             save_and_next,
             outputs=[save_status, gallery, selected_image_info] + OPEN_OUTPUTS,
-        ).then(None, js=RELOAD_CANVAS)
+        ).then(  # a new image means new candidates to choose between
+            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
 
         skip_btn.click(
             skip_to_next, outputs=[selected_image_info] + OPEN_OUTPUTS,
-        ).then(None, js=RELOAD_CANVAS)
+        ).then(  # a new image means new candidates to choose between
+            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
 
         # ---- Results ----
         refresh_btn.click(get_session_summary,
