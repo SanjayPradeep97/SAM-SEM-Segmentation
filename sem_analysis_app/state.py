@@ -66,6 +66,11 @@ class AppState:
         # back to a frame whose bar was read by hand meant doing that work again,
         # and there was no way to tell a restored calibration from a fresh guess.
         self.scale_by_image = {}
+        # nm/px most recently accepted by the analyst in this session. A reading
+        # that agrees with it is almost certainly the same magnification read the
+        # same way, so it is let through without a stop; anything else is worth a
+        # look. Used only to decide whether to interrupt, never to set a scale.
+        self.scale_baseline = None
         self.selected_mask_index = None
         self.analyzer = None
         self.min_particle_size = 30  # Minimum particle size in pixels for filtering
@@ -169,6 +174,18 @@ class AppState:
         self.analyzer.mask = self.mask_history.pop()
         self.analyzer._relabel_and_filter()
         return True
+
+    def accept_scale(self, calibration):
+        """
+        Record a scale the analyst has accepted, as the yardstick for the next.
+
+        A folder is normally shot at one or two magnifications, so the first
+        accepted reading vouches for every later one that matches it — and a
+        change of magnification stops for a fresh look exactly once. Not cleared
+        by reset_image_state: it belongs to the run, not to one image.
+        """
+        if calibration is not None:
+            self.scale_baseline = float(calibration.nm_per_px)
 
     def current_path(self):
         """Path of the image on screen, or None."""

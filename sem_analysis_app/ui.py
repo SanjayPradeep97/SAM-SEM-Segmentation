@@ -22,7 +22,9 @@ from .callbacks import (
     restore_session,
     select_image_from_gallery,
     # scale and frame
+    accept_from_work_tab,
     apply_two_points,
+    check_outputs,
     clear_crop_override,
     clear_scale,
     confirm_scale,
@@ -292,6 +294,9 @@ def create_interface():
                         scale_image_in = gr.Textbox(elem_id="scale_image_in", **_chan)
                         scale_box_out = gr.Textbox(elem_id="scale_box_out", **_chan)
                         scale_points_out = gr.Textbox(elem_id="scale_points_out", **_chan)
+                        # Its own channel: the measured span changes every time
+                        # the scale is re-read, while the image stays the same.
+                        scale_span_in = gr.Textbox(elem_id="scale_span_in", **_chan)
 
                         gr.HTML(
                             '<div style="width:100%">'
@@ -328,6 +333,14 @@ def create_interface():
                         reset_canvas_btn = gr.Button("↺ Reset box / points", size="sm")
                         tier_status = gr.Textbox(label="Result", interactive=False,
                                                  lines=3)
+                        # The number is only half the reading: the other half is
+                        # which pixels were counted, and that can only be judged
+                        # by looking. Ticks should sit on the ends of the printed
+                        # bar — not inside it, not past it.
+                        scale_preview = gr.Image(
+                            label="What was measured", height=190,
+                            interactive=False,
+                        )
 
             # ============================================================
             # TAB 3: Segment & Refine
@@ -335,6 +348,22 @@ def create_interface():
             with gr.Tab("🔬 Segment & Refine", id=3):
                 header = gr.Markdown("### No image loaded\nPick one from the Gallery.",
                                      elem_classes=["frame-header"])
+
+                # Shown only for a reading nothing has vouched for yet. A scale
+                # that agrees with one already accepted never raises this, so
+                # working through a folder at one magnification is uninterrupted;
+                # a scale with a warning does not raise it either, because that
+                # one is worth going to the Scale tab for.
+                with gr.Row(visible=False) as scale_check_row:
+                    with gr.Column(scale=2):
+                        scale_check_msg = gr.Markdown("")
+                        scale_check_btn = gr.Button("✔️ Scale is right — carry on",
+                                                    variant="primary", size="sm")
+                    with gr.Column(scale=3):
+                        scale_check_img = gr.Image(
+                            label="", show_label=False, height=150,
+                            interactive=False,
+                        )
 
                 with gr.Row():
                     # ---- tool rail --------------------------------------
@@ -481,6 +510,13 @@ def create_interface():
                         frame_status, header, mask_viz, segment_status, mask_choice]
         RELOAD_CANVAS = "() => { window.SCALE && window.SCALE.load(); }"
 
+        # Everything that shows what the scale is and how much it should be
+        # trusted. Run after anything that can change it, so the canvas overlay,
+        # the zoomed check, the prompt on the working tab and the tab the analyst
+        # is left on cannot disagree about the same reading.
+        CHECK_OUTPUTS = [scale_span_in, scale_preview, scale_check_row,
+                         scale_check_msg, scale_check_img, tabs]
+
         # Nothing here re-draws the scale canvas on a tab change. Gradio unmounts
         # an inactive tab's panel and builds a fresh canvas when it is shown
         # again, and a Tab's select event does not fire in a way this can hook —
@@ -508,7 +544,8 @@ def create_interface():
         ).then(
             open_current_image, outputs=OPEN_OUTPUTS,
         ).then(  # a new image means new candidates to choose between
-            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
+            lambda: gr.update(open=True), outputs=[candidate_panel]
+        ).then(check_outputs, outputs=CHECK_OUTPUTS).then(None, js=RELOAD_CANVAS)
 
         # ---- Scale & Frame ----
         canvas_mode.change(
@@ -522,7 +559,8 @@ def create_interface():
 
         read_box_btn.click(read_box_scale, inputs=[scale_box_out],
                            outputs=[tier_status, scale_summary]).then(
-            frame_header, outputs=[header])
+            frame_header, outputs=[header]).then(
+            check_outputs, outputs=CHECK_OUTPUTS)
 
         # Live feedback as the two points are placed.
         scale_points_out.change(live_point_readout, inputs=[scale_points_out],
@@ -530,16 +568,26 @@ def create_interface():
 
         apply_points_btn.click(
             apply_two_points, inputs=[scale_points_out, bar_value, bar_unit],
-            outputs=[tier_status, scale_summary]).then(frame_header, outputs=[header])
+            outputs=[tier_status, scale_summary]).then(
+            frame_header, outputs=[header]).then(
+            check_outputs, outputs=CHECK_OUTPUTS)
 
         reset_canvas_btn.click(None, js="() => { window.SCALE && window.SCALE.reset(); }")
 
         confirm_scale_btn.click(confirm_scale,
                                 outputs=[tier_status, scale_summary]).then(
-            frame_header, outputs=[header])
+            frame_header, outputs=[header]).then(
+            check_outputs, outputs=CHECK_OUTPUTS)
         clear_scale_btn.click(clear_scale,
                               outputs=[tier_status, scale_summary]).then(
-            frame_header, outputs=[header])
+            frame_header, outputs=[header]).then(
+            check_outputs, outputs=CHECK_OUTPUTS)
+
+        # Accepting from the working tab, so checking a reading costs a glance
+        # and a click rather than a trip to another tab and back.
+        scale_check_btn.click(
+            accept_from_work_tab,
+            outputs=CHECK_OUTPUTS + [header, scale_summary])
 
         # An override re-derives the frame's geometry, since the instrument
         # decides whether a databar is expected and which way round particles are.
@@ -620,12 +668,14 @@ def create_interface():
             save_and_next,
             outputs=[save_status, gallery, selected_image_info] + OPEN_OUTPUTS,
         ).then(  # a new image means new candidates to choose between
-            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
+            lambda: gr.update(open=True), outputs=[candidate_panel]
+        ).then(check_outputs, outputs=CHECK_OUTPUTS).then(None, js=RELOAD_CANVAS)
 
         skip_btn.click(
             skip_to_next, outputs=[selected_image_info] + OPEN_OUTPUTS,
         ).then(  # a new image means new candidates to choose between
-            lambda: gr.update(open=True), outputs=[candidate_panel]).then(None, js=RELOAD_CANVAS)
+            lambda: gr.update(open=True), outputs=[candidate_panel]
+        ).then(check_outputs, outputs=CHECK_OUTPUTS).then(None, js=RELOAD_CANVAS)
 
         # ---- Results ----
         refresh_btn.click(get_session_summary,

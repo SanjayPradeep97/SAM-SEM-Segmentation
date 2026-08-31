@@ -18,6 +18,7 @@ from PIL import Image
 from sem_particle_analysis import modality, region
 from sem_particle_analysis import scale_calibration as sc
 from ..state import state
+from ..visualization import render_scale_check
 
 UNITS = ["nm", "µm", "mm", "Å"]
 
@@ -51,6 +52,11 @@ def _image_payload(image, box=None):
     A ``box`` is included when automatic detection already found the bar, so the
     canvas opens with the region it used and the analyst can see what was read
     rather than having to guess where to look.
+
+    ``px_scale`` is how much the frame was shrunk to get here. The canvas works
+    in the coordinates of the image it was sent, so without it a frame larger
+    than MAX_CANVAS_PX would have every box and click committed in the wrong
+    space — an oversized frame's bar would be measured somewhere else entirely.
     """
     array = np.asarray(image)
     if array.ndim == 3:
@@ -64,7 +70,8 @@ def _image_payload(image, box=None):
     pil.save(buffer, format="PNG", optimize=False, compress_level=1)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     payload = {"img": f"data:image/png;base64,{encoded}",
-               "w": pil.width, "h": pil.height}
+               "w": pil.width, "h": pil.height,
+               "px_scale": pil.width / max(1, array.shape[1])}
     if box:
         payload["box"] = {"x0": box[0], "y0": box[1], "x1": box[2], "y1": box[3]}
     return json.dumps(payload)
@@ -88,17 +95,13 @@ def _bar_region(calibration):
 
     Only meaningful when the bar was found inside the image itself.
     """
-    extra = getattr(calibration, "extra", None) or {}
     # Not named `region`: that is the module handling analysable area, imported
     # above and used a few lines further down.
-    found = extra.get("region")
-    if found and len(found) == 4:
-        return tuple(int(v) for v in found)
-    box = extra.get("box")
-    if box and len(box) == 4:
-        x0, y0, x1, y1 = (int(v) for v in box)
-        return (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
-    return None
+    found = sc.search_box(calibration)
+    if found is None:
+        return None
+    x0, y0, x1, y1 = found
+    return (x0, y0, max(1, x1 - x0), max(1, y1 - y0))
 
 
 def _apply_frame_geometry(calibration):
@@ -354,6 +357,9 @@ def prepare_scale_tab():
         return _try_automatic_bar(payload, tier1)
 
     _adopt(calibration)
+    # Exact, and therefore the best possible yardstick for the readings that
+    # follow it in this folder.
+    state.accept_scale(calibration)
     name = os.path.basename(str(path)) if path else "image"
     return (payload,
             f"✅ Tier 1 — pixel size read from {name}'s metadata. Nothing else to do.",
@@ -390,8 +396,11 @@ def _try_automatic_bar(payload, tier1_message):
         warning=found.get("warning"),
         # Recorded so that, on a frame with no databar to crop, segmentation can
         # exclude the patch the bar occupies instead of measuring it.
+        # line_coords say which pixels were counted, so the span can be drawn
+        # on the bar rather than only reported as a number.
         extra={"region": found.get("region"),
-               "region_name": found.get("region_name")},
+               "region_name": found.get("region_name"),
+               "line_coords": found.get("line_coords")},
     )
     _adopt(calibration)
 
@@ -416,6 +425,7 @@ def read_box_scale(box_json, progress=gr.Progress()):
                 "the image, then drag the corners to adjust."), _status_lines()
 
     progress(0.4, desc="Reading the scale bar...")
+    before = _analysable_fraction()
     try:
         calibration = sc.from_box_ocr(_detector(), state.current_image, box)
     except sc.ScaleError as exc:
@@ -424,7 +434,8 @@ def read_box_scale(box_json, progress=gr.Progress()):
 
     _adopt(calibration)
     note = f"  ⚠️ {calibration.warning}" if calibration.warning else ""
-    return (f"✅ Tier 2 — {calibration.summary()}{note}", _status_lines())
+    return (f"✅ Tier 2 — {calibration.summary()}{note}"
+            f"{_geometry_note(before)}", _status_lines())
 
 
 def apply_two_points(points_json, value, unit):
@@ -436,13 +447,16 @@ def apply_two_points(points_json, value, unit):
     if value is None:
         return "❌ Type the length printed next to the bar.", _status_lines()
 
+    before = _analysable_fraction()
     try:
         calibration = sc.from_two_points(points[0], points[1], float(value), unit)
     except sc.ScaleError as exc:
         return f"❌ Tier 3 — {exc}", _status_lines()
 
     _adopt(calibration)
-    return f"✅ Tier 3 — {calibration.summary()}", _status_lines()
+    state.accept_scale(calibration)
+    return (f"✅ Tier 3 — {calibration.summary()}{_geometry_note(before)}",
+            _status_lines())
 
 
 def confirm_scale():
@@ -453,6 +467,8 @@ def confirm_scale():
     cal.confirmed = True
     cal.warning = None
     state.scale_info = cal.to_dict()
+    # From here on, a reading that agrees with this one needs no second look.
+    state.accept_scale(cal)
     return "✅ Scale confirmed", _status_lines()
 
 
@@ -504,3 +520,135 @@ def _parse_points(raw):
         return [tuple(p) for p in data.get("points", [])][:2]
     except (TypeError, ValueError, AttributeError):
         return []
+
+
+# ---------------------------------------------------------------------------
+# Checking a reading, and deciding when it is worth interrupting for
+# ---------------------------------------------------------------------------
+
+# Two readings this close are the same magnification measured the same way. A
+# bar is a whole number of pixels long, so identical setups still differ by one
+# or two; 2% covers that without letting a real change of magnification past.
+SAME_SCALE_TOLERANCE = 0.02
+
+
+def _analysable_fraction():
+    """How much of the frame is currently set to be measured, 0-1, or None."""
+    info = getattr(state, "region_info", None) or {}
+    return info.get("analysable_fraction")
+
+
+def _geometry_note(before):
+    """
+    Say so when settling the scale also changed what will be segmented.
+
+    Finding a burned-in bar excludes the patch it occupies, so a mask made
+    before the bar was found still has the bar in shot — and it out-contrasts
+    the particles, so it gets measured as one.
+    """
+    after = _analysable_fraction()
+    if before is None or after is None or abs(after - before) < 0.001:
+        return ""
+    return "\n   Frame changed — press Segment again so the new area is used."
+
+
+def review():
+    """
+    Whether the scale on screen should be looked at before anything is measured.
+
+    The point of the working loop is to move through a folder quickly, so an
+    interruption has to earn itself. Three cases do:
+
+    - There is no scale at all. Everything measured would be in pixels.
+    - The reading came with a warning — a non-standard bar value, a guessed
+      unit, a bar running out of the search box. These are the readings that are
+      wrong often enough to be worth stopping for.
+    - It is an OCR reading that neither a human nor a matching earlier reading
+      has vouched for.
+
+    Anything that agrees with a scale already accepted in this session is let
+    through, which is what makes the loop fast: a folder shot at one
+    magnification asks once and then stays out of the way.
+
+    Returns:
+        tuple: ``(level, message)``. Level is "stop" when there is nothing
+        trustworthy to measure with, "check" when a glance would settle it, and
+        None when it can be taken as read.
+    """
+    cal = getattr(state, "scale_calibration", None)
+    if cal is None:
+        return "stop", ("No scale for this image — anything measured would be in "
+                        "pixels. Draw a box around the bar and read it, or click "
+                        "its two ends.")
+    if cal.warning:
+        return "stop", cal.warning
+    if cal.trustworthy:
+        return None, ""
+
+    baseline = getattr(state, "scale_baseline", None)
+    if baseline and abs(cal.nm_per_px - baseline) <= SAME_SCALE_TOLERANCE * baseline:
+        return None, ""
+    if baseline:
+        return "check", (f"**{cal.nm_per_px:.4g} nm/px** — a different "
+                         f"magnification from the last scale you accepted "
+                         f"({baseline:.4g} nm/px). Check the bar below.")
+    return "check", (f"**{cal.nm_per_px:.4g} nm/px**, read off the bar. "
+                     f"Check the measured span below.")
+
+
+def scale_span_payload():
+    """
+    The measured span, for the canvas to draw over the image.
+
+    In full-frame coordinates; the canvas maps them into whatever size it was
+    sent. Empty when there is nothing measured to show.
+    """
+    cal = getattr(state, "scale_calibration", None)
+    span = sc.measured_span(cal) if cal is not None else None
+    if span is None:
+        return json.dumps({})
+    (ax, ay), (bx, by) = span
+    label = f"{cal.pixel_length or abs(bx - ax):.0f} px"
+    if cal.scale_nm:
+        label += f" = {sc.format_length(cal.scale_nm)}"
+    return json.dumps({"span": [[ax, ay], [bx, by]], "label": label})
+
+
+def scale_check_view():
+    """The measured bar, zoomed, with the span drawn across it. None if none."""
+    return render_scale_check(state.current_image,
+                              getattr(state, "scale_calibration", None))
+
+
+def check_outputs():
+    """
+    Everything the interface needs to show a reading and let it be judged.
+
+    Returned by every path that can change the scale, so the canvas overlay, the
+    zoomed check, the prompt on the working tab and the tab the analyst ends up
+    on can never disagree about what the current scale is.
+
+    Returns:
+        tuple: (span_payload, scale_preview, check_row, check_message,
+                check_image, tab)
+    """
+    level, message = review()
+    view = scale_check_view()
+    return (scale_span_payload(),
+            view,                                  # beside the canvas
+            gr.update(visible=level == "check"),
+            message,
+            view,                                  # again, on the working tab
+            gr.Tabs(selected=2) if level == "stop" else gr.update())
+
+
+def accept_from_work_tab():
+    """
+    Confirm the scale from the working tab, without going to look for it.
+
+    The whole cost of checking should be one glance and one click; making the
+    analyst switch tabs to accept what they have already looked at is what makes
+    supervision expensive enough to skip.
+    """
+    confirm_scale()
+    return check_outputs() + (frame_header(), _status_lines())

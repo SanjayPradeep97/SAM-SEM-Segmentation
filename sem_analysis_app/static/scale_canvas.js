@@ -22,9 +22,16 @@
 
   const S = {
     img: null, iw: 0, ih: 0,
+    // Sent-image pixels per original-frame pixel. A frame too large to send
+    // whole arrives shrunk, and everything committed back to Python has to be
+    // in the coordinates of the frame it will be measured in, not of the
+    // picture that was convenient to draw.
+    pxScale: 1,
     mode: "box",
-    box: null,               // {x0,y0,x1,y1} in IMAGE coords
-    points: [],              // [[x,y], ...] in IMAGE coords
+    box: null,               // {x0,y0,x1,y1} in SENT-IMAGE coords
+    points: [],              // [[x,y], ...] in SENT-IMAGE coords
+    span: null,              // [[x,y],[x,y]] in ORIGINAL coords: what was measured
+    spanLabel: "",
     drag: null,              // {kind, corner, grabDX, grabDY}
     cursor: null,            // [x,y] image coords, for the loupe
     view: { s: 1, ox: 0, oy: 0 },
@@ -95,7 +102,56 @@
 
     if (S.mode === "box" && S.box) drawBox(ctx);
     if (S.mode === "points") drawPoints(ctx);
+    // Drawn in both modes and last, so it is never hidden by the box that
+    // produced it: this is the measurement being checked.
+    drawSpan(ctx);
     if (S.mode === "points" && S.cursor) drawLoupe(ctx);
+  }
+
+  /*
+   * The span that was actually measured, marked on the bar it was measured on.
+   *
+   * The reported nm/px is a printed length divided by this many pixels, and the
+   * pixel count is the half of it that reading the number cannot check. Ticks
+   * cross the bar at each end so a measurement that stopped short, overran, or
+   * followed something else entirely shows up as a picture rather than as a
+   * plausible number.
+   */
+  function drawSpan(ctx) {
+    if (!S.span) return;
+    const ends = S.span.map(function (p) {
+      return toDisplay(p[0] * S.pxScale, p[1] * S.pxScale);
+    });
+    const off = 10, tick = 9;
+
+    [["rgba(0,0,0,0.85)", 5], ["#ff4060", 2]].forEach(function (style) {
+      ctx.save();
+      ctx.strokeStyle = style[0];
+      ctx.lineWidth = style[1];
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(ends[0][0], ends[0][1] + off);
+      ctx.lineTo(ends[1][0], ends[1][1] + off);
+      ends.forEach(function (p) {
+        ctx.moveTo(p[0], p[1] - tick);
+        ctx.lineTo(p[0], p[1] + off + tick);
+      });
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    if (!S.spanLabel) return;
+    const mx = (ends[0][0] + ends[1][0]) / 2;
+    const my = Math.min(ends[0][1], ends[1][1]) - tick - 6;
+    ctx.save();
+    ctx.font = "bold 12px ui-monospace, monospace";
+    const w = ctx.measureText(S.spanLabel).width + 10;
+    ctx.fillStyle = "rgba(0,0,0,0.78)";
+    ctx.fillRect(mx - w / 2, my - 15, w, 18);
+    ctx.fillStyle = "#ff8fa3";
+    ctx.textAlign = "center";
+    ctx.fillText(S.spanLabel, mx, my - 2);
+    ctx.restore();
   }
 
   function drawBox(ctx) {
@@ -298,13 +354,18 @@
     };
   }
 
+  // Committed in the coordinates of the original frame, which is the one the
+  // measurement will be taken in.
+  const toOriginal = (v) => v / (S.pxScale || 1);
+
   const commitBox = () => S.box && pushTo("scale_box_out", {
-    x0: Math.round(S.box.x0), y0: Math.round(S.box.y0),
-    x1: Math.round(S.box.x1), y1: Math.round(S.box.y1),
+    x0: Math.round(toOriginal(S.box.x0)), y0: Math.round(toOriginal(S.box.y0)),
+    x1: Math.round(toOriginal(S.box.x1)), y1: Math.round(toOriginal(S.box.y1)),
   });
 
   const commitPoints = () => pushTo("scale_points_out", {
-    points: S.points.map(([x, y]) => [+x.toFixed(2), +y.toFixed(2)]),
+    points: S.points.map(([x, y]) =>
+      [+toOriginal(x).toFixed(2), +toOriginal(y).toFixed(2)]),
   });
 
   /* ---------- public API, called from Gradio events ---------- */
@@ -325,12 +386,20 @@
       const img = new Image();
       img.onload = function () {
         S.img = img; S.iw = img.naturalWidth; S.ih = img.naturalHeight;
+        S.pxScale = data.px_scale || 1;
         S.points = [];
+        // A different image: whatever was measured on the last one is not this
+        // one's. Re-read from the channel on the next tick.
+        S.span = null; S.spanLabel = ""; lastSpan = null;
         // Python sends the region automatic detection used, when it found one,
-        // so the analyst sees what was measured instead of a generic guess.
+        // so the analyst sees what was measured instead of a generic guess. It
+        // arrives in original-frame coordinates, like everything else crossing
+        // this boundary.
         S.box = data.box ? {
-          x0: clamp(data.box.x0, 0, S.iw), y0: clamp(data.box.y0, 0, S.ih),
-          x1: clamp(data.box.x1, 0, S.iw), y1: clamp(data.box.y1, 0, S.ih),
+          x0: clamp(data.box.x0 * S.pxScale, 0, S.iw),
+          y0: clamp(data.box.y0 * S.pxScale, 0, S.ih),
+          x1: clamp(data.box.x1 * S.pxScale, 0, S.iw),
+          y1: clamp(data.box.y1 * S.pxScale, 0, S.ih),
         } : defaultBox();
         fitView();
         commitBox();
@@ -382,7 +451,15 @@
    * drawn yet.
    */
   let lastPayload = null;
+  let lastSpan = null;
   let fittedFor = 0;          // parent width the current fit was computed against
+
+  function readSpan(raw) {
+    let data = null;
+    try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+    S.span = data && data.span && data.span.length === 2 ? data.span : null;
+    S.spanLabel = (data && data.label) || "";
+  }
 
   function ensureCanvas() {
     const c = canvas();
@@ -406,6 +483,16 @@
     }
 
     if (!S.img) return;
+
+    // The span arrives on its own channel, because it changes every time the
+    // scale is re-read while the image on screen stays the same.
+    const sa = document.querySelector("#scale_span_in textarea");
+    const spanRaw = sa ? sa.value : null;
+    if (spanRaw !== lastSpan) {
+      lastSpan = spanRaw;
+      readSpan(spanRaw);
+      draw();
+    }
 
     // Layout settles after the element is built, and a panel that is still
     // hidden reports no width at all — a fit computed then leaves the canvas

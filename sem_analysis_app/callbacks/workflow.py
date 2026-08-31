@@ -85,10 +85,12 @@ def save_and_next(progress=gr.Progress()):
     """
     Save the current image's measurements, then load and prepare the next.
 
-    Stays on the working tab rather than jumping to Scale: with scale settled
-    automatically on nearly every frame, a forced detour costs more than it
-    saves over a folder of hundreds. What was decided is shown in the header
-    instead, so anything that needs checking is visible without switching.
+    The next image is calibrated from scratch — nothing is inherited — and the
+    analyst stays on the working tab. A forced detour through Scale on every
+    frame costs more than it saves over a folder of hundreds, so the interruption
+    is made conditional instead: scale_tab.check_outputs, wired after this,
+    switches to the Scale tab when the new reading has nothing vouching for it,
+    and otherwise offers it for a glance without moving.
 
     Returns:
         tuple: (save_status, gallery, image_info, canvas_payload, tier1_status,
