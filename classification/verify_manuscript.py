@@ -115,12 +115,30 @@ deltas = [cmp[k]["delta"] for k in ftk if k in cmp]
 put("baseline_margin_min", min(deltas), f"{min(deltas):.1f}")
 put("baseline_margin_max", max(deltas), f"{max(deltas):.1f} percentage points (over all {len(deltas)} fine-tuned configurations)")
 worst = min((cmp[k] for k in ftk if k in cmp), key=lambda c: c["delta"])
-put("closest_finetuned", worst["method"], worst["method"])
+# two fine-tuned rows can tie exactly (same number of correct OOF predictions):
+# the "closest baseline" is then the whole tied set, and the text must name all
+closest = sorted(cmp[k]["method"] for k in ftk if k in cmp
+                 and abs(cmp[k]["delta"] - worst["delta"]) < 1e-9)
+FT_TEX = {"vit_b16": "ViT-B/16", "yolo11": "YOLOv11", "yolo26": "YOLO26",
+          "resnet50": "ResNet-50", "convnextv2": "ConvNeXt-V2"}
+put("closest_finetuned", closest, " and ".join(closest) + (" (tied)" if len(closest) > 1 else ""))
 put("worst_p_holm_significant", bool(worst["p_holm"] < 0.05), str(worst["p_holm"] < 0.05))
 put("frozen_none_significant",
     bool(all(cmp[k]["p_holm"] >= 0.05 for k in cmp if "[" in k)),
     "no frozen encoder differs significantly")
 put("family_size", a["family_size"], f"{a['family_size']} tests")
+
+# fine-tuning folds: how many early-stopped within two epochs, and how those
+# folds scored against the ones that trained ten epochs or more (Methods caveat)
+_ep = np.array([e for r in ft for e in json.loads(r["fold_epochs"])])
+_ac = np.array([x for r in ft for x in json.loads(r["cv_folds"])])
+put("ft_folds_total", int(len(_ep)), f"{len(_ep)} fine-tuning folds")
+put("ft_folds_stopped_le2", int((_ep <= 2).sum()), f"{int((_ep <= 2).sum())} of the {len(_ep)} folds stopped within two epochs")
+put("ft_acc_early_folds", float(_ac[_ep <= 2].mean()), f"{_ac[_ep <= 2].mean():.1f}% (folds stopping within two epochs)")
+put("ft_acc_late_folds", float(_ac[_ep >= 10].mean()), f"{_ac[_ep >= 10].mean():.1f}% (folds running ten epochs or more)")
+# every fine-tuned configuration is trained ONCE per fold with seed 42 by
+# paper_results.py; there is no multi-seed averaging anywhere in the protocol
+put("finetune_seeds_per_config", 1, "one seed (42) per configuration; no averaging over seeds")
 
 # refit flags: every flagged row must be documented, and the paper never quotes a refit number
 import paper_protocol as P
@@ -209,8 +227,22 @@ if TEX is not None:
     check("baseline margin", f"{min(deltas):.1f} to {max(deltas):.1f} percentage points")
     if worst["p_holm"] >= 0.05:
         bad.append(("a fine-tuned baseline is NOT significant -- text claims all are", worst["method"]))
-    check("closest baseline", "ViT-B/16 fine-tuned on masked crops" if worst["method"] == "vit_b16|masked"
-          else f"closest baseline is {worst['method']}")
+    if "the closest being" in main:            # only if the text makes the claim
+        m_sent = re.search(r"[^.]*the closest being[^.]*\.", main)
+        sent = m_sent.group(0) if m_sent else ""
+        for k in closest:
+            check(f"closest baseline names {k}", FT_TEX[k.split('|')[0]], sent)
+        if len(closest) > 1:
+            check("closest-baseline sentence says the tie is exact", "tied", sent)
+    if "fine-tuning folds stopped within two epochs" in main:
+        check("fine-tuning folds stopped early",
+              f"{int((_ep <= 2).sum())} of the {len(_ep)} fine-tuning folds stopped within two epochs")
+        check("early vs late fold accuracy",
+              f"average {_ac[_ep <= 2].mean():.1f}\% accuracy against {_ac[_ep >= 10].mean():.1f}\%")
+    for phrase in ("three random seeds", "mean over seeds", "several seeds"):
+        if phrase in main:
+            bad.append(("text claims multi-seed averaging; paper_results.py trains each "
+                        "configuration once with seed 42", phrase))
     check("Luo table row", f"& VGG-16 + VLAD & {float(luo['cv_acc']):.2f} & {float(luo['test_acc']):.2f} &")
     check("Luo in text", f"({float(luo['cv_acc']):.1f}\\% $\\pm$ {float(luo['cv_std']):.1f}\\% cross-validated, "
                          f"{float(luo['test_acc']):.1f}\\% test)")

@@ -74,18 +74,30 @@ figure is clean: no test image enters the dictionary or the fit.
 |---|---|---|---|
 | **`none`** | clean | **85.49 ± 1.16** | 87.71 (157/179) |
 | `l2` | clean | 84.62 ± 0.95 | 87.71 (157/179) |
-| `blockl2` | clean | 84.37 ± 0.98 | 87.71 (157/179) |
+| `blockl2` | clean | 84.31 ± 1.31 | 87.15 (156/179) |
 | `none` | leaky | 85.31 ± 0.92 | 90.50 (162/179) |
 | `l2` | leaky | 84.81 ± 1.32 | 86.59 (155/179) |
+| `blockl2` | leaky | 84.56 ± 1.27 | 88.27 (158/179) |
 
 The reported row is `none`, the clean run with the best cross-validated
 accuracy (`python ../classification/luo_results.py` prints the selection).
-The three normalisations differ by about one point on CV and not at all on
-the test set. The leaky rows show what selecting the boosting rounds on the
+The three normalisations differ by about one point on CV and by at most one
+test image. The leaky rows show what selecting the boosting rounds on the
 scored set does: up to +2.8 points on test for the same features, which is
 the mechanism behind the withdrawn figure of an earlier version of this work
 and why no leaky number is ever reported. Every run is in
 `results/luo_baseline_summary.csv` and the per-run JSON files.
+
+**Run-to-run variation.** The `blockl2` clean configuration was run three
+times on the same machine (twice while the GPU was shared with another job,
+once alone) and gave 84.37, 84.93 and 84.31 % cross-validated accuracy
+(87.71, 85.47 and 87.15 % on test); the table shows the uncontended run. The
+`none` configuration gave identical numbers in two runs. The spread comes
+from GPU floating-point nondeterminism in the VGG forward pass (cuDNN
+autotuning is on, see `classification/gpu_boost.py`) propagating through
+K-means; it is about half a point on CV, smaller than the gap to the
+pre-specified model (4.0 points) and it never changed the ordering of the
+three variants. `none` was the best on CV in every run.
 
 ## Running it
 
@@ -100,8 +112,9 @@ python run_all.py --report        :: rebuild the summary CSV from results/*.json
 
 VLAD feature matrices (~0.5 GB per normalisation) are cached under
 `<CNT_BASE>/Luo Baseline/`; the cache key covers every option that affects the
-features and a mismatched cache is refused rather than reused. Runs are
-bit-reproducible given the same GPU class.
+features and a mismatched cache is refused rather than reused. Repeated runs
+are not bit-identical on a GPU (see "Run-to-run variation" above); every RNG
+draw is seeded, but cuDNN's autotuned convolution algorithms are not.
 
 ## Correctness notes
 

@@ -119,8 +119,11 @@
     "printed": "9.0 percentage points (over all 10 fine-tuned configurations)"
   },
   "closest_finetuned": {
-    "value": "vit_b16|masked",
-    "printed": "vit_b16|masked"
+    "value": [
+      "vit_b16|masked",
+      "yolo11|masked"
+    ],
+    "printed": "vit_b16|masked and yolo11|masked (tied)"
   },
   "worst_p_holm_significant": {
     "value": true,
@@ -133,6 +136,26 @@
   "family_size": {
     "value": 117,
     "printed": "117 tests"
+  },
+  "ft_folds_total": {
+    "value": 50,
+    "printed": "50 fine-tuning folds"
+  },
+  "ft_folds_stopped_le2": {
+    "value": 17,
+    "printed": "17 of the 50 folds stopped within two epochs"
+  },
+  "ft_acc_early_folds": {
+    "value": 82.84197059563361,
+    "printed": "82.8% (folds stopping within two epochs)"
+  },
+  "ft_acc_late_folds": {
+    "value": 85.21395677328226,
+    "printed": "85.2% (folds running ten epochs or more)"
+  },
+  "finetune_seeds_per_config": {
+    "value": 1,
+    "printed": "one seed (42) per configuration; no averaging over seeds"
   },
   "refit_unreliable_rows": {
     "value": [

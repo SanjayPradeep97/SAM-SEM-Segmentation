@@ -198,9 +198,10 @@ be discovered:
 * **The Luo baseline's descriptor normalisation** is not specified in the
   original paper. All three options the re-implementation offers were run
   under the clean protocol (cross-validated accuracy: `none` 85.49 %, `l2`
-  84.62 %, `blockl2` 84.37 %; all three score 87.71 % on the held-out test
-  set), and the best on cross-validation, `none`, is the row the paper
-  reports (`baseline/README.md`, `classification/luo_results.py`).
+  84.62 %, `blockl2` 84.31 %; held-out test 87.71 %, 87.71 % and 87.15 %),
+  and the best on cross-validation, `none`, is the row the paper reports
+  (`baseline/README.md`, `classification/luo_results.py`). Repeated runs of
+  this baseline move by up to half a point on CV; the ordering did not change.
 
 Development scratch is not included: superseded runs on a different, balanced
 1,800-image split, an abandoned relabelling exercise, working directories and

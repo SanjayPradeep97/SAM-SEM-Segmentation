@@ -481,8 +481,11 @@ def _kmeans_once(X, k, g, iters, tol_rel):
 def gpu_kmeans(X, k, iters=100, seed=42, n_init=10, tol_rel=1e-4, prog=None):
     """K-means with k-means++ seeding, n_init restarts, best-inertia selection.
 
-    D1: every RNG draw goes through the seeded generator `g`, so the dictionary
-        is bit-reproducible across runs and machines.
+    D1: every RNG draw goes through the seeded generator `g`.  The seeding is
+        exact, but the descriptors it clusters come from a cuDNN-autotuned VGG
+        forward pass, so repeated GPU runs differ at the last bits and the
+        dictionary is reproducible in distribution, not bit for bit (about
+        half a point of CV accuracy; see README.md, "Run-to-run variation").
     D2: n_init restarts (sklearn's default is 10) and an explicit warning if a
         restart exhausts `iters` without converging. A single unlucky init used
         to be able to hand the baseline a bad dictionary.
