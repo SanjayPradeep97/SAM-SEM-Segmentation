@@ -8,6 +8,7 @@ file is exactly that situation.
 """
 
 import ast
+import os
 
 import pandas as pd
 import pytest
@@ -241,3 +242,104 @@ class TestParseMeasurementList:
     def test_a_non_list_literal_raises(self):
         with pytest.raises(ValueError):
             dm.parse_measurement_list("42")
+
+
+class TestScaleMethodIsRecorded:
+    """
+    A number in nm_per_px says nothing about how much to trust it.
+
+    Metadata is exact; a bar read by OCR can misread a digit and rescale one
+    image's measurements by a factor of seven, as C1_0030 in the NIOSH set does.
+    Both land in the same column as the same float, so the results file has to
+    carry the provenance alongside it or the questionable rows cannot be found
+    again afterwards.
+    """
+
+    def test_it_is_stored_with_the_row(self, manager):
+        manager.add_result("a.tif", measurements(3), scale_method="metadata")
+        assert manager.get_results()["scale_method"].iloc[0] == "metadata"
+
+    def test_an_unvouched_reading_is_marked_as_such(self, manager):
+        manager.add_result("a.tif", measurements(3),
+                           scale_method="box_ocr+unconfirmed")
+        manager.add_result("b.tif", measurements(3), scale_method="metadata")
+        rows = manager.get_results()
+        suspect = rows[rows["scale_method"].str.endswith("+unconfirmed")]
+        assert list(suspect["file_name"]) == ["a.tif"]
+
+    def test_saying_nothing_records_nothing(self, manager):
+        # Distinct from "none", which is a positive statement that the image was
+        # measured in pixels.
+        manager.add_result("a.tif", measurements(3))
+        assert pd.isna(manager.get_results()["scale_method"].iloc[0])
+
+
+class TestOlderResultsFilesAreWidened:
+    def older_file(self, tmp_path, rows=1):
+        """A results file from before scale_method existed."""
+        path = tmp_path / "older.csv"
+        columns = ["file_name", "num_particles", "nm_per_px", "particle_areas_px",
+                   "equiv_diameters_px", "particle_areas_nm2", "equiv_diameters_nm"]
+        frame = pd.DataFrame(
+            [{"file_name": f"old{i}.tif", "num_particles": 4, "nm_per_px": 2.5,
+              "particle_areas_px": "[1.0]", "equiv_diameters_px": "[2.0]",
+              "particle_areas_nm2": "[6.25]", "equiv_diameters_nm": "[5.0]"}
+             for i in range(rows)],
+            columns=columns)
+        frame.to_csv(path, index=False)
+        return path
+
+    def test_the_column_is_added_on_load(self, tmp_path):
+        path = self.older_file(tmp_path)
+        ResultsManager(csv_file=str(path))
+        assert "scale_method" in pd.read_csv(path).columns
+
+    def test_the_rows_already_there_are_untouched(self, tmp_path):
+        path = self.older_file(tmp_path, rows=3)
+        before = pd.read_csv(path)
+        ResultsManager(csv_file=str(path))
+        after = pd.read_csv(path)
+
+        assert len(after) == len(before)
+        for column in before.columns:
+            assert list(after[column]) == list(before[column])
+        # ...and they say nothing about a scale method, because nothing was
+        # recorded when they were written.
+        assert after["scale_method"].isna().all()
+
+    def test_rows_appended_afterwards_carry_it(self, tmp_path):
+        # The point of widening: without it, a resumed session would go on
+        # writing the old shape for the rest of the folder.
+        path = self.older_file(tmp_path)
+        manager = ResultsManager(csv_file=str(path))
+        manager.add_result("new.tif", measurements(2), scale_method="two_points")
+
+        rows = pd.read_csv(path)
+        assert rows.loc[rows["file_name"] == "new.tif", "scale_method"].iloc[0] \
+            == "two_points"
+
+    def test_a_read_only_manager_leaves_the_file_alone(self, tmp_path):
+        path = self.older_file(tmp_path)
+        original = path.read_bytes()
+        ResultsManager(csv_file=str(path), auto_create=False)
+        assert path.read_bytes() == original
+
+    def test_columns_the_file_has_and_we_do_not_are_kept(self, tmp_path):
+        path = self.older_file(tmp_path)
+        frame = pd.read_csv(path)
+        frame["operator_note"] = "checked by hand"
+        frame.to_csv(path, index=False)
+
+        ResultsManager(csv_file=str(path))
+        widened = pd.read_csv(path)
+        assert "operator_note" in widened.columns
+        assert widened["operator_note"].iloc[0] == "checked by hand"
+
+    def test_a_file_already_at_the_current_schema_is_not_rewritten(self, tmp_path):
+        path = tmp_path / "current.csv"
+        manager = ResultsManager(csv_file=str(path))
+        manager.add_result("a.tif", measurements(2), scale_method="metadata")
+        stamp = os.stat(path).st_mtime_ns
+
+        ResultsManager(csv_file=str(path))
+        assert os.stat(path).st_mtime_ns == stamp
