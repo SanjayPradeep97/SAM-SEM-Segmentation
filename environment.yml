@@ -1,0 +1,47 @@
+# Classification pipeline + demo environment (`cnt-vfm`).
+#
+#     conda env create -f environment.yml
+#     conda activate cnt-vfm
+#     python classification/check_env.py          # verifies torch, GPU, timm, xgboost
+#
+# GPU: torch and torchvision are PINNED to the CUDA 12.8 builds (the "+cu128"
+# local version) so that an RTX 50-series card (Blackwell, sm_120) gets a build
+# with code for it.  The pin matters: an unpinned `torch` resolves to the newer
+# CPU-only wheel on PyPI, which imports fine and silently runs everything on
+# the CPU.  Older NVIDIA cards work with the same wheels.  Without an NVIDIA
+# GPU everything still runs on CPU (feature extraction ~10x slower; the probes
+# and the analysis are fast either way).
+#
+# On macOS / a machine without CUDA, replace the two pinned lines with
+#     - torch>=2.6
+#     - torchvision
+# After creating the env, `python classification/check_env.py` reports whether
+# the GPU is really usable.  If pip ever swaps torch for a CPU build (e.g. an
+# ultralytics upgrade), restore it with
+#     pip install --force-reinstall torch==2.11.0+cu128 torchvision==0.26.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+name: cnt-vfm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.11.0+cu128
+      - torchvision==0.26.0+cu128
+      - timm>=1.0.15
+      - huggingface_hub
+      - xgboost>=2.1
+      - scikit-learn>=1.4
+      - scipy
+      - numpy
+      - pandas
+      - pillow
+      - matplotlib
+      - seaborn
+      - opencv-python
+      - scikit-image
+      - tqdm
+      - ultralytics>=8.3
+      - gradio>=5
+      - git+https://github.com/facebookresearch/segment-anything.git

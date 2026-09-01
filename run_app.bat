@@ -1,6 +1,6 @@
 @echo off
-REM Quick launcher for SEM Particle Analysis Gradio App
-REM This script activates the conda environment and runs the application
+REM Quick launcher for the SEM/TEM particle analysis Gradio app (Windows).
+REM Activates a conda environment and starts the app from the repo root.
 
 REM Set console to UTF-8 to handle emoji and special characters
 chcp 65001 > nul 2>&1
@@ -14,16 +14,15 @@ echo  SEM Particle Analysis - Gradio App
 echo ========================================
 echo.
 
-REM The environment to use. SEM_analysis is what the README describes; cnt-imaging
-REM is the one actually built on this machine, with torch+CUDA for the RTX 5080,
-REM easyocr and gradio. Whichever exists is used, preferring SEM_analysis.
-set CONDA_ROOT=C:\Users\sanja\anaconda3
-set SEM_ENV=SEM_analysis
-if not exist "%CONDA_ROOT%\envs\%SEM_ENV%" set SEM_ENV=cnt-imaging
+REM The conda environment to use (README.md, "Segmentation tool").  Override
+REM with   set SEM_ENV=my-env   before running, or edit the default here.
+if "%SEM_ENV%"=="" set SEM_ENV=SEM_analysis
+if "%CONDA_ROOT%"=="" set CONDA_ROOT=%USERPROFILE%\anaconda3
+if not exist "%CONDA_ROOT%" if exist "%USERPROFILE%\miniconda3" set CONDA_ROOT=%USERPROFILE%\miniconda3
 
 if not exist "%CONDA_ROOT%\envs\%SEM_ENV%" (
-    echo ERROR: no usable conda environment found under %CONDA_ROOT%\envs
-    echo Create one, or edit SEM_ENV at the top of this script.
+    echo ERROR: conda environment "%SEM_ENV%" not found under %CONDA_ROOT%\envs
+    echo Create it ^(see README.md^), or set SEM_ENV / CONDA_ROOT before running this script.
     pause
     exit /b 1
 )

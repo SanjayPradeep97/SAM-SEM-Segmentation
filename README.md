@@ -1,333 +1,222 @@
-# SAM-SEM Segmentation Toolkit
+# Quantification and Classification of Carbon Nanotubes in Electron Micrographs using Vision Foundation Models
 
-> **AI-powered segmentation and analysis of particles in electron microscopy images using Meta's Segment Anything Model (SAM)**
+Code, results and reproduction scripts for the paper of that title (Pradeep,
+Wang, Dahm, Eldredge & Tsai; *Scientific Reports*, under review). This branch
+(`publication`) is written for someone who has the paper open and wants to
+check a number. Every reported value can be recomputed from the files here;
+the expensive ones can also be recomputed from the raw images.
 
-This toolkit provides both a **Python package** for programmatic access and a **web-based GUI** for interactive analysis.
+The project does two things:
 
----
+1. **Segmentation and quantification.** An interactive tool built on Meta's
+   Segment Anything Model: read the scale bar (OCR or metadata), click on
+   particles to get masks, post-process them, and measure area and equivalent
+   diameter. This is the tool used for Table 1 and to produce every mask in the
+   classification dataset. [`docs/SEGMENTATION_TOOL.md`](docs/SEGMENTATION_TOOL.md)
+   is its manual.
+2. **Classification.** A frozen DINOv2 ViT-B/14 whose hypercolumn features are
+   pooled only inside the particle's mask, followed by a small MLP, assigns each
+   segmented particle to Fiber, Cluster, Matrix or MatrixSurface. The
+   evaluation protocol, the eight-encoder benchmark, five fine-tuned baselines,
+   the Luo et al. re-implementation and every statistical test are in
+   [`classification/`](classification/) and [`baseline/`](baseline/).
 
-## 🚀 Quick Start
+A small [demo](demo/README.md) joins the two: click on a particle, SAM masks
+it, the classifier labels it.
 
-### 1. Setup Environment
+## Repository layout
 
-```bash
-# Create conda environment
-conda create -n SEM_analysis python=3.11
-conda activate SEM_analysis
+| directory | what it holds |
+|---|---|
+| `sem_particle_analysis/`, `sem_analysis_app/`, `tests/` | the segmentation library, its Gradio app and its test suite (unchanged from `main`) |
+| `classification/` | protocol, feature extraction, probes, fine-tuned baselines, statistics, figure and table scripts, tests |
+| `baseline/` | the Luo et al. (2021) VGG-16 + VLAD re-implementation and its results |
+| `results/` | the run the paper reports: every configuration's metrics and **per-image predictions**, `analysis.json`, the epoch sweep, regenerated figures |
+| `splits/` | `dataset_splits.pkl`, the 1,785-image partition every number uses, plus the same as a CSV |
+| `demo/` | the click-to-classify demonstration |
+| `reproduce.bat` | the one-command reproduction |
 
-# Install PyTorch (choose based on your system)
-# For RTX 5080 (Blackwell architecture):
-pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+## Install
 
-# For RTX 30/40 series:
-conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+Two conda environments, one per half of the project.
 
-# For Apple Silicon (M1/M2/M3/M4):
-conda install pytorch torchvision -c pytorch
-
-# For CPU only:
-conda install pytorch torchvision cpuonly -c pytorch
-
-# Install the package and all dependencies
-pip install -e .
-```
-
-### 2. Download SAM Weights
-
-```bash
-# Download ViT-H (best quality, 2.4GB)
-python download_sam_weights.py
-
-# Weights will be saved to: sam_weights/
-```
-
-### 3. Run the Web Application
-
-**Windows:**
-```bash
-run_app.bat
-```
-
-**macOS/Linux:**
-```bash
-python -m sem_analysis_app
-```
-
-Open your browser to `http://127.0.0.1:7860`. Use `--port` / `--host` to change
-where it listens.
-
-### 4. Establishing Scale
-
-Scale gets its own tab, because every measurement is a pixel count multiplied by
-this one number. Three tiers, tried in order of trustworthiness:
-
-| Tier | Method | When it applies |
-| --- | --- | --- |
-| 1 | Pixel size read from the file's own metadata | Automatic on load. Exact — nothing to check |
-| 2 | Read the printed scale bar inside a box you draw | Runs automatically first; drag the box if it got it wrong |
-| 3 | Click both ends of the bar and type its length | When the bar is unreadable. A magnifier follows the cursor so you land on the exact pixel |
-
-Tier 2's box is manipulated directly on the image: drag anywhere to draw one,
-drag a corner to resize, drag the middle to move. Tier 3 shows a 7x loupe with a
-crosshair marking precisely which pixel a click will land on.
-
-A tier-2 reading is marked unconfirmed until you press **Confirm scale**; tier 1
-and tier 3 are trusted outright, since neither involves a machine reading a
-glyph. The result is shown as "X nm/px · how it was obtained", and it is what the
-Processing tab and the results CSV use. Nothing downstream re-detects scale or
-overrides what you set here.
-
-Calibration needs only OCR, so you can sort out scale before loading a SAM
-checkpoint.
-
-### 5. SEM and TEM in One Workflow
-
-The two need opposite handling, and the app works out which it is looking at from
-the file rather than asking you to remember:
-
-| | SEM | TEM |
-| --- | --- | --- |
-| Instrument read from | FEI / Zeiss / Hitachi / TESCAN tags | JEOL mode tag, else frame shape |
-| Databar | detected and trimmed | none — frame kept whole |
-| Scale bar | in the databar, which gets cropped | burned into the frame, so its patch is excluded from measurement |
-| Particles are | **brighter** than the substrate | **darker** than the support film |
-
-Both decisions are shown on the Scale tab and can be overridden there, or with
-`--modality` and `--particles` in batch mode.
-
-**Analysable region.** Micrographs routinely contain large areas that are not
-specimen — the black corners left by a circular aperture, a specimen grid bar
-blocking the beam, a burned-in scale bar. Every one of them out-contrasts the
-particles, so they are excluded before anything is measured. Left in, they are
-what gets measured: on real frames these produced five "particles" of 119 µm
-that were the corner wedges, and 221 spurious particles that were a grid bar.
-The share excluded is shown on the Scale tab and recorded per image in
-`run.json`.
-
-**Magnification.** Low-magnification overviews are navigation frames; their
-particles are a few pixels across and counting them adds noise. `--max-nm-per-px`
-skips them, and skipped frames are recorded as skipped rather than failed.
-
-### 6. Batch Analysis Without the GUI
-
-For a dataset you intend to publish, run the pipeline headless. Every run writes
-a `run.json` recording the image hashes, model and checkpoint hash, the scale and
-how it was obtained, all parameters, library versions and the git revision — so a
-result can be traced back to exactly what produced it.
+**Classification pipeline, baseline and demo** (`cnt-vfm`):
 
 ```bash
-sem-analyze data/raw/sample-a -o data/processed/sample-a --clear-edges
+conda env create -f environment.yml
+conda activate cnt-vfm
+python classification/check_env.py
 ```
 
-Outputs: `particles.csv` (one row per particle), `per_image_summary.csv`,
-`size_distribution.png/.pdf` at 300 dpi, and `run.json`.
+**Segmentation tool** (`SEM_analysis`): see the install section of
+[`docs/SEGMENTATION_TOOL.md`](docs/SEGMENTATION_TOOL.md). It needs EasyOCR and
+Gradio and is kept separate because EasyOCR pins its own PyTorch.
 
-Useful flags:
+A minimal environment for the baseline alone is in `baseline/environment.yml`.
+GPU notes: PyTorch is taken from the CUDA 12.8 wheel index so an RTX 50-series
+card works; everything also runs on CPU, more slowly.
 
-| Flag | Effect |
-| --- | --- |
-| `--scale-nm-per-px X` | Fix the scale instead of detecting it per image |
-| `--scale-method metadata\|ocr\|auto` | How to establish scale (default `auto`) |
-| `--clear-edges` | Drop particles touching the frame; they are only partly imaged |
-| `--min-size N` | Ignore particles below N pixels (default 30) |
-| `--crop-percent P` | Override databar removal (default: measure it) |
-| `--model-type vit_b` | Faster, lower quality than the default `vit_h` |
-| `--modality SEM\|TEM` | Force the instrument kind (default: read it from the file) |
-| `--particles bright\|dark` | Force particle polarity (default: follow the modality) |
-| `--max-nm-per-px X` | Skip frames coarser than this — magnifications too low to resolve particles |
-| `--min-nm-per-px X` | Skip frames finer than this |
+## Data
 
-Note that batch mode uses the automatic pipeline only — no interactive
-refinement — and picks its mask candidate by heuristic. The chosen mask and the
-rejected candidates are recorded in `run.json`.
+The TEM images are third-party and are **not in this repository**. They are the
+NIOSH dataset on Harvard Dataverse,
+<https://doi.org/10.7910/DVN/5O0SF7> (*Dataset of TEM Images for Carbon
+Nanomaterial Classification*, 5,323 images, licence CC BY-NC 4.0). The paper
+uses 1,785 of them; `splits/dataset_splits.csv` lists which, and in which
+partition.
 
-### 7. Use as Python Package
+Set `CNT_BASE` to a directory laid out as
 
-```python
-from sem_particle_analysis import SAMModel, ParticleAnalyzer
-
-# Your code here
+```
+<CNT_BASE>/
+    NIOSH Dataset/CNT-Fiber/CNT-Fiber-0001.tif ...       the Dataverse download
+    NIOSH Dataset/CNT-Cluster/ ...   CNT-Matrix/ ...   CNT-MatrixSurface/ ...
+    NIOSH Dataset/Masks/masks/CNT-Fiber-0001_mask.png ... the segmentation masks
 ```
 
-### 8. Run the Tests
+Feature caches (`Encoder Benchmark/`, about 1.5 GB) and download caches
+(`_cache/`) are created underneath it. Nothing in the code refers to any other
+location; `classification/cnt_paths.py` is the single place paths are resolved.
+
+**Masks.** The 1,785 masks were made with the segmentation tool in this
+repository and are distributed with the paper's data archive rather than in
+this branch, because they are derived from the CC BY-NC images and the
+authors have not yet confirmed redistribution here. Until the archive link is
+in the paper, regenerate any mask with the tool (`docs/SEGMENTATION_TOOL.md`,
+"Interactive refinement") or use the demo, which makes masks live. The
+classification pipeline refuses to run if a mask is missing, and says so.
+
+The SEM images of Table 1 were acquired under a collaboration that does not
+permit redistribution.
+
+## The one-command reproduction
+
+```bat
+conda activate cnt-vfm
+set CNT_BASE=<data root>
+reproduce.bat
+```
+
+What it does, and how long it takes on an RTX 5080:
+
+| step | what | time |
+|---|---|---|
+| 0 | environment check; assert `encoder_bench.py` and `paper_results.py` agree on every feature-cache name | 20 s |
+| 1–2 | extract features for 8 encoders (benchmark geometry) and DINOv2 (manuscript geometry) | ~1.5 h first time, seconds afterwards |
+| 3 | 108 frozen probes, 10 fine-tuned baselines, statistics | ~3.5 h; **skipped while `results/analysis.json` exists** (`--force` recomputes) |
+| 4 | epoch-budget sweep | 3 min |
+| 5 | Figures 4, 7, 8 into `results/figures/` | 2 min |
+| 6 | LaTeX bodies of Tables 2 and 3, printed | 1 s |
+| 7 | `verify_manuscript.py`: every headline number re-derived and checked | 1 s |
+
+Because `results/` ships with the run the paper reports, a first run finishes in
+the time feature extraction takes, and step 7 passes against the shipped
+files. Delete or `--force` to recompute from the images. Details, including
+how to run stage 3 in pieces, are in
+[`classification/REPRODUCE.md`](classification/REPRODUCE.md). The Luo
+baseline is its own command (`baseline/run_all.py`, about 1.5 h).
+
+Without a GPU or the images, the statistics still recompute from the shipped
+per-image predictions:
 
 ```bash
-pytest                      # everything
-pytest -m "not slow"        # skip tests needing model weights or OCR
+python classification/paper_results.py --stages analyse     # rewrites results/analysis.json
+python classification/make_tables.py
+python classification/verify_manuscript.py
 ```
 
-The fast suite takes a few seconds and needs neither SAM weights nor EasyOCR;
-tests that do are marked `slow` and skip themselves with a reason when their
-dependency is missing. Measurements are checked against shapes of exactly known
-size — `tests/synthetic.py` builds micrographs whose scale bar length, printed
-label and particle mask are all ground truth — so a regression shows up as a
-wrong number rather than merely a changed one.
+## Where each number, figure and table comes from
 
-### Optional dependencies
+| in the paper | produced by | from |
+|---|---|---|
+| Table 1 (segmentation Dice/IoU, clicks) | the segmentation tool, `sem_particle_analysis/`; scored by hand against expert masks | SEM/TEM validation images (SEM not redistributable) |
+| Table 2 (selected configurations) | `classification/make_tables.py` | `results/results_probes.csv` |
+| Table 3 (baselines and *p* values) | `classification/make_tables.py` | `results/results_probes.csv`, `results/results_finetune.csv`, `results/analysis.json`, `baseline/results/luo_results_*.json` |
+| Fig. 4 (test confusion matrix) | `classification/figures/make_confusion.py` | `results/per_image_probe.json` |
+| Fig. 6 (DINOv2 activation mosaic) | notebook figure from the original submission, unchanged; not regenerated here | |
+| Fig. 7 (SAM activation mosaic) and the 1.05 / 0.97 ratios in its caption | `classification/figures/make_sam_mosaic.py`, `neck_inversion.py` | four micrographs + masks, SAM ViT-B checkpoint |
+| Fig. 8 (t-SNE of the test set) | `classification/figures/make_tsne.py` | DINOv2 manuscript-geometry feature cache |
+| Fig. 9 (composite multi-particle demo) | made by hand with the segmentation tool for the original submission | |
+| headline 89.5 % ± 1.0 % CV, 92.7 % (166/179) test, CI 88.0–95.7 % | `classification/paper_results.py --stages analyse` | `results/analysis.json` → `headline` |
+| "108 configurations, 80.8 % to 89.7 %, mean 86.6 % ± 2.0 %" | `verify_manuscript.py` derives them | `results/results_probes.csv` |
+| mask effect: 54/54 pairs, +2.48 pp, sign test, *t* = 17.8 | `classification/analyse.py::mask_effect` | `results/analysis.json` → `mask_effect` |
+| every *p* value (exact McNemar, Holm over 117 tests) | `classification/analyse.py::compare_all` | `results/analysis.json` → `comparisons` |
+| fine-tuned baselines and the 4.3–9.0 pp margin | `paper_results.py --stages finetune` | `results/results_finetune.csv`, `results/per_image_finetune.json` |
+| Luo et al. row | `baseline/run_all.py`, selected by `classification/luo_results.py` | `baseline/results/` |
+| Supplementary S2 (layer ablation), S3 (MLP sweep), S5 (CLS token) | notebooks from the original submission, not re-run in this revision | |
+| Supplementary Table S3 (all 108 configurations) | `results/results_probes.csv` directly | |
+| epoch-budget check | `classification/epoch_sweep.py` | `results/epoch_sweep.json` |
 
-Only two parts of the toolkit need the heavy optional stack:
+`classification/verify_manuscript.py` prints every derived value in the form the
+paper prints it; run it and compare.
 
-| Dependency | Needed for | Without it |
-| --- | --- | --- |
-| `easyocr` | Reading a printed scale bar (tier 2) | Scale from metadata or by hand still works; OCR raises `OCRUnavailableError` explaining the fix |
-| `gradio` | The web app | The library and `sem-analyze` are unaffected |
+## What the protocol guarantees
 
-Importing `sem_particle_analysis` pulls in neither. EasyOCR's models load on
-first OCR use rather than when a `ScaleDetector` is constructed, so a
-metadata-only run never pays for them.
+`classification/paper_protocol.py` is the single evaluation routine every method
+goes through: frozen probes, fine-tuned networks and the VLAD baseline alike.
 
----
+* **The test set is scored once, for a configuration fixed in advance.**
+  `PRIMARY` is declared as a literal before any result exists (DINOv2, 518 px,
+  taps [1,3,6,9,11], mask-guided avg+max pooling, MLP). No table can promote
+  another configuration on the strength of a test number; other rows in
+  Table 3 show each method's best configuration *by cross-validated accuracy*.
+* **Early stopping uses an inner split only.** Each fold model trains on 90 %
+  of its training folds and stops on the remaining 10 %; the held-out fold and
+  the test set are never a stopping monitor. `_guarded()` enforces this on
+  every call; `test_protocol.py` and `mutants.py` re-inject seven bugs,
+  including the one in the paragraph below, and show each is caught.
+* **Scalers are fit on training rows only.**
+* **Caches are keyed by split** (and by geometry, pyramid input size, a
+  random-weights flag and any checkpoint override), so features of one split
+  can never be loaded for another; `check_cache_agreement.py` proves both
+  scripts build the same names.
+* **Comparisons are made on 1,606 out-of-fold predictions**, not on the
+  179-image test set, which cannot resolve differences of a few points; the
+  test set is reported once with a Wilson interval.
 
-## 📦 What's Included
+## What changed, and the earlier number
 
-### 1. **Gradio Web Application** (`sem_analysis_app/`)
+An earlier version of this work reported 95.53 % test accuracy. That figure was
+produced by a notebook that passed the test loader into the validation slot of
+the training loop, so the final checkpoint was selected on the test set. The
+error was found during revision, the protocol above was written so it cannot
+recur, and every number in the paper comes from that protocol. The details,
+including the +4.7 pp signature the bug left across all 24 original
+configurations, are in `classification/paper_protocol.py` and
+`classification/REPRODUCE.md`. `verify_manuscript.py` exists so the manuscript
+and the results files cannot drift apart again.
 
-A beautiful, production-ready web interface with:
+Two further things a careful reader will find, stated here rather than left to
+be discovered:
 
-- **🤖 AI-Powered Segmentation**: Automatic particle detection using SAM
-- **📏 Auto Scale Detection**: OCR-based scale bar recognition and calibration
-- **✏️ Interactive Refinement**: Add, delete, merge particles; point-based refinement with live preview
-- **📊 Real-time Analysis**: Particle measurements with histograms and statistics
-- **💾 Batch Processing**: Process multiple images with session tracking
-- **📈 Results Management**: CSV export, duplicate removal, row deletion
-- **↩️ Undo/Redo**: Click-level undo for refinement operations
-- **🎯 Advanced Features**: Edge particle removal, particle number toggle, size filtering
+* **The `refit_unreliable` column.** Each row carries three test-set variants;
+  the paper reports the fold ensemble. The single-model "refit" variant is
+  meaningless for four fine-tuned rows whose folds stopped inside the first
+  three epochs, and is flagged as such (`classification/REPRODUCE.md`, "The
+  `refit_unreliable` flag").
+* **The Luo baseline's descriptor normalisation** is not specified in the
+  original paper. All three options were run and the best on cross-validation
+  is reported (`baseline/README.md`).
 
-Module layout:
+Development scratch is not included: superseded runs on a different, balanced
+1,800-image split, an abandoned relabelling exercise, working directories and
+feature caches. What is here is the run the paper reports and everything
+needed to recompute it.
 
-```
-sem_analysis_app/
-├── __main__.py       entry point (python -m sem_analysis_app)
-├── ui.py             tab layout and event wiring
-├── state.py          shared application state
-├── callbacks/        event handlers, one module per tab
-└── visualization.py  overlays and figures
-```
+## Tests
 
-The app keeps a single process-wide state object, so it is built for one analyst
-at a time; two browser tabs pointed at the same server share one session.
-
-See [`sem_analysis_app/README.md`](sem_analysis_app/README.md) for detailed usage instructions.
-
-### 2. **Python Package** (`sem_particle_analysis/`)
-
-A clean, modular Python library for programmatic access:
-
-- Scale detection and image preprocessing
-- SAM-based particle segmentation
-- Particle analysis and measurements
-- Results export to CSV
-- Interactive Jupyter notebook widgets (legacy)
-
-See [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md) for API documentation.
-
----
-
-## 🎯 Key Features
-
-### Automatic Scale Detection
-- OCR-based scale bar detection using EasyOCR
-- Support for both horizontal and vertical scale bars
-- Manual override option for non-standard scales
-
-### Advanced Particle Refinement
-- **Delete Mode**: Click particles to remove false positives
-- **Add Mode**: Click to add missed particles
-- **Merge Mode**: Combine touching particles
-- **Point Refine Mode**: Iterative refinement with positive/negative points
-- Undo individual clicks before applying changes
-- Real-time visualization with live previews
-
-### Comprehensive Analysis
-- Particle count and size distribution
-- Area measurements (pixels and nm²)
-- Equivalent diameter calculations
-- Summary statistics (mean, median, std, min, max)
-- Aggregate statistics across all images in session
-
-### Results Management
-- Auto-save to CSV after each image
-- Session-wide tracking and export
-- Duplicate detection and removal
-- Individual row deletion
-- State persistence across sessions
-
----
-
-## 💻 System Requirements
-
-- **Python**: 3.11 or higher
-- **GPU**: Optional but recommended
-  - NVIDIA GPU with CUDA support (RTX 5080, 4090, 3090, etc.)
-  - Apple Silicon (M1/M2/M3/M4) with MPS support
-  - CPU fallback available (slower)
-- **RAM**: 8GB minimum, 16GB+ recommended
-- **Storage**: ~3GB for SAM model + your images
-
-### Performance Expectations
-- **RTX 5080 (CUDA)**: 1-3 seconds per image
-- **Apple Silicon (MPS)**: 2-5 seconds per image
-- **CPU**: 10-30 seconds per image
-
----
-
-## 📚 Documentation
-
-- **Web App Guide**: [`sem_analysis_app/README.md`](sem_analysis_app/README.md)
-- **Python API**: [`sem_particle_analysis/README.md`](sem_particle_analysis/README.md)
-
----
-
-## 🔧 Supported Image Formats
-
-- `.tif`, `.tiff`
-- `.png`
-- `.jpg`, `.jpeg`
-
----
-
-## 📊 Output Data
-
-Results are exported as CSV files containing:
-- Filename
-- Particle count
-- Individual particle areas (pixels and nm²)
-- Equivalent diameters (pixels and nm)
-- Easy integration with Excel, Python, R, etc.
-
----
-
-## 🎓 Citation
-
-This tool uses Meta's Segment Anything Model (SAM):
-
-```bibtex
-@article{kirillov2023segment,
-  title={Segment Anything},
-  author={Kirillov, Alexander and Mintun, Eric and Ravi, Nikhila and Mao, Hanzi and Rolland, Chloe and Gustafson, Laura and Xiao, Tete and Whitehead, Spencer and Berg, Alexander C. and Lo, Wan-Yen and Doll{\'a}r, Piotr and Girshick, Ross},
-  journal={arXiv:2304.02643},
-  year={2023}
-}
+```bash
+pytest                                       # segmentation library, a few seconds
+cd classification
+python test_protocol.py                      # 41 checks on the protocol (needs one feature cache)
+python mutants.py                            # re-injects 7 audited bugs; all must be caught
+python test_yolo_adapter.py                  # no GPU or images needed
+python test_cache.py
 ```
 
----
+## Citation
 
-## 📝 License
-
-MIT License - See LICENSE file for details
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-
-## 🙏 Acknowledgments
-
-Built with:
-- [Segment Anything Model](https://segment-anything.com/) by Meta AI
-- [Gradio](https://gradio.app/) for the web interface
-- [EasyOCR](https://github.com/JaidedAI/EasyOCR) for scale detection
-- [scikit-image](https://scikit-image.org/) for image processing
+See [`CITATION.cff`](CITATION.cff). The segmentation tool builds on Segment
+Anything (Kirillov et al., 2023); the classifier on DINOv2 (Oquab et al.,
+2023). Licence: MIT ([`LICENSE`](LICENSE)). The images are CC BY-NC 4.0 and
+belong to their depositors.

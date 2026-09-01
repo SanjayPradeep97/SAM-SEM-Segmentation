@@ -54,3 +54,14 @@ Extrusion data for plastic blocks dinning hall plastics/
 gradio_cached_examples/
 flagged/
 add_scale_bars.ipynb
+
+# Publication branch: data, caches and generated artefacts that must not be committed
+_cache/
+_work/
+runs/
+*.npz
+*.npy
+demo/images/
+results/figures/*.pdf
+yolo*.pt
+*.part
