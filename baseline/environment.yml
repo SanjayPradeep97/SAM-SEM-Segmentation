@@ -1,0 +1,25 @@
+# Minimal environment for the Luo et al. (2021) baseline only (`cnt-luo`).
+# The full pipeline environment (../environment.yml, `cnt-vfm`) also runs it;
+# this one exists so the baseline can be checked without timm or ultralytics.
+#
+#     conda env create -f baseline/environment.yml
+#     conda activate cnt-luo
+#     python classification/check_env.py
+#
+# torch/torchvision are pinned to the cu128 builds; see the note in
+# ../environment.yml (an unpinned torch resolves to a CPU-only wheel).
+name: cnt-luo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.11.0+cu128
+      - torchvision==0.26.0+cu128
+      - xgboost>=2.1
+      - scikit-learn>=1.4
+      - numpy
+      - scipy
+      - pillow

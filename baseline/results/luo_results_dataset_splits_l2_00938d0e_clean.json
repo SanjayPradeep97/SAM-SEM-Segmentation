@@ -1,0 +1,69 @@
+{
+  "feat_key": "dataset_splits|l2|dens0.1|K50|postTrue|lim0",
+  "splits": "dataset_splits.pkl",
+  "out_dir": "<CNT_BASE>/Luo Baseline",
+  "tag": "dataset_splits_l2_00938d0e",
+  "img_size": 224,
+  "vgg_relu_indices": [
+    3,
+    8,
+    13,
+    22,
+    29
+  ],
+  "hypercolumn_dim": 1472,
+  "density": 0.1,
+  "n_clusters": 50,
+  "dict_sample_per_image": 250,
+  "n_folds": 5,
+  "n_init": 10,
+  "seed": 42,
+  "batch_size": 32,
+  "desc_norm": "l2",
+  "vlad_postnorm": true,
+  "earlystop": "clean",
+  "device": "cuda",
+  "n_rounds": 400,
+  "early_stopping_rounds": 30,
+  "max_bin": 64,
+  "colsample": 0.3,
+  "cv_mean_acc": 84.62046013041542,
+  "cv_std_acc": 0.952203873715342,
+  "cv_mean_f1": 0.8439233621163981,
+  "cv_std_f1": 0.009819867579276163,
+  "cv_time_min": 13.518001087506612,
+  "test_acc": 87.70949720670392,
+  "test_f1": 0.8774234771639069,
+  "test_n": 179,
+  "test_correct": 157,
+  "test_ci_low": 82.09258006343046,
+  "test_ci_high": 91.74182086064809,
+  "final_rounds": 67,
+  "final_time_min": 4.247881237665812,
+  "confusion_matrix": [
+    [
+      38,
+      3,
+      2,
+      0
+    ],
+    [
+      3,
+      37,
+      4,
+      0
+    ],
+    [
+      0,
+      3,
+      42,
+      1
+    ],
+    [
+      2,
+      3,
+      1,
+      40
+    ]
+  ]
+}
