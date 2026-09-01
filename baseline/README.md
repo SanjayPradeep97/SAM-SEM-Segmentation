@@ -93,8 +93,8 @@ and why no leaky number is ever reported. Every run is in
 conda activate cnt-vfm            :: or cnt-luo from baseline/environment.yml
 set CNT_BASE=<data root>          :: see ../classification/cnt_paths.py
 cd baseline
-python run_all.py                 :: none + l2 + blockl2, clean + leaky; ~1.5 h on an RTX 5080
-python run_all.py --norms l2      :: one normalisation, clean + leaky; ~30 min
+python run_all.py                 :: none + l2 + blockl2, clean + leaky; ~2 h on an RTX 5080
+python run_all.py --norms l2      :: one normalisation, clean + leaky; ~40 min
 python run_all.py --report        :: rebuild the summary CSV from results/*.json
 ```
 

@@ -12,7 +12,7 @@ REM  Optional: CNT_TEX   directory holding main.tex / supplementary.tex.  Withou
 REM                      it step 7 checks against classification\manuscript_numbers.json,
 REM                      the snapshot of the numbers as printed in the paper.
 REM
-REM  Stages 1-3 are the expensive ones (~3.5 h on an RTX 5080, mostly stage 3);
+REM  Stages 1-3 are the expensive ones (~3 h on an RTX 5080, mostly stage 3);
 REM  they are skipped automatically when their outputs exist.  The shipped
 REM  results\ directory therefore lets a first run finish in about ten minutes
 REM  (feature caches + epoch sweep + figures + tables + verification).

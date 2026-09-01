@@ -102,8 +102,8 @@ What it does, and how long it takes on an RTX 5080:
 | step | what | time |
 |---|---|---|
 | 0 | environment check; assert `encoder_bench.py` and `paper_results.py` agree on every feature-cache name | 20 s |
-| 1–2 | extract features for 8 encoders (benchmark geometry) and DINOv2 (manuscript geometry) | ~1.5 h first time, seconds afterwards |
-| 3 | 108 frozen probes, 10 fine-tuned baselines, statistics | ~3.5 h; **skipped while `results/analysis.json` exists** (`--force` recomputes) |
+| 1–2 | extract features for 8 encoders (benchmark geometry) and DINOv2 (manuscript geometry) | ~10 min first time, seconds afterwards |
+| 3 | 108 frozen probes, 10 fine-tuned baselines, statistics | ~3 h; **skipped while `results/analysis.json` exists** (`--force` recomputes) |
 | 4 | epoch-budget sweep | 3 min |
 | 5 | Figures 4, 7, 8 into `results/figures/` | 2 min |
 | 6 | LaTeX bodies of Tables 2 and 3, printed | 1 s |
@@ -114,7 +114,7 @@ the time feature extraction takes, and step 7 passes against the shipped
 files. Delete or `--force` to recompute from the images. Details, including
 how to run stage 3 in pieces, are in
 [`classification/REPRODUCE.md`](classification/REPRODUCE.md). The Luo
-baseline is its own command (`baseline/run_all.py`, about 1.5 h).
+baseline is its own command (`baseline/run_all.py`, about 2 h).
 
 Without a GPU or the images, the statistics still recompute from the shipped
 per-image predictions:
@@ -210,7 +210,7 @@ needed to recompute it.
 ## Tests
 
 ```bash
-pytest                                       # segmentation library, a few seconds
+pytest                                       # segmentation library, under a minute
 cd classification
 python test_protocol.py                      # 42 checks on the protocol (needs one feature cache)
 python mutants.py                            # re-injects 7 audited bugs; all must be caught

@@ -16,9 +16,9 @@ if the results files disagree with the manuscript's numbers.
 | step | script | cost (RTX 5080) | output |
 |------|--------|------|--------|
 | 0 | `check_env.py`, `encoder_bench.py --dry-run`, `check_cache_agreement.py` | 20 s | environment usable; both scripts agree, byte for byte, on all 40 feature-cache filenames (default and every variant) |
-| 1 | `encoder_bench.py --group reviewers` | ~1.5 h, or seconds if cached | 8 encoders at the matched 32x32 benchmark geometry, `<CNT_BASE>/Encoder Benchmark/feats_*_dataset_splits.npz` |
-| 2 | `encoder_bench.py --encoders dinov2_b14 --target-grid 37 --taps 1,3,6,9,11` | 5 min, or seconds if cached | DINOv2 at the manuscript geometry |
-| 3 | `paper_results.py --stages probes finetune analyse` | ~3.5 h; **skipped while `results/analysis.json` exists** | 108 probes, 10 fine-tuned baselines, `analysis.json`, per-image predictions |
+| 1 | `encoder_bench.py --group reviewers` | ~9 min, or seconds if cached | 8 encoders at the matched 32x32 benchmark geometry, `<CNT_BASE>/Encoder Benchmark/feats_*_dataset_splits.npz` |
+| 2 | `encoder_bench.py --encoders dinov2_b14 --target-grid 37 --taps 1,3,6,9,11` | 30 s, or seconds if cached | DINOv2 at the manuscript geometry |
+| 3 | `paper_results.py --stages probes finetune analyse` | ~3 h; **skipped while `results/analysis.json` exists** | 108 probes, 10 fine-tuned baselines, `analysis.json`, per-image predictions |
 | 4 | `epoch_sweep.py` | 3 min | epoch-budget ablation, decided on CV (`results/epoch_sweep.json`) |
 | 5 | `figures/make_confusion.py`, `make_tsne.py`, `make_sam_mosaic.py` | 2 min | Figures 4, 7 and 8 into `results/figures/` |
 | 6 | `make_tables.py` | 1 s | LaTeX bodies of Tables 2 and 3, printed |
@@ -39,7 +39,7 @@ python paper_results.py --stages probes
 python paper_results.py --stages analyse                             :: no GPU, no data root needed
 ```
 
-The Luo et al. baseline is run separately (`baseline/run_all.py`, ~1.5 h) and
+The Luo et al. baseline is run separately (`baseline/run_all.py`, ~2 h) and
 its results are read from `baseline/results/`; stage 6 and 7 use them.
 
 ## Step 7 without the manuscript source
