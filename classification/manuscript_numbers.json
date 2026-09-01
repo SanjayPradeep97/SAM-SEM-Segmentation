@@ -1,0 +1,217 @@
+{
+  "headline_cv_acc": {
+    "value": 89.53922789539229,
+    "printed": "89.5%"
+  },
+  "headline_cv_std": {
+    "value": 0.9541806554368468,
+    "printed": "1.0%"
+  },
+  "headline_test_acc": {
+    "value": 92.73743016759776,
+    "printed": "92.7%"
+  },
+  "headline_test_correct": {
+    "value": 166,
+    "printed": "166/179"
+  },
+  "headline_test_ci": {
+    "value": [
+      88.0,
+      95.7
+    ],
+    "printed": "95% CI 88.0-95.7%"
+  },
+  "headline_table_cv": {
+    "value": 89.53922789539229,
+    "printed": "89.54"
+  },
+  "headline_table_test": {
+    "value": 92.73743016759776,
+    "printed": "92.74"
+  },
+  "n_images": {
+    "value": 1785,
+    "printed": "1,785"
+  },
+  "split": {
+    "value": [
+      1428,
+      178,
+      179
+    ],
+    "printed": "1,428 / 178 / 179"
+  },
+  "n_Fiber": {
+    "value": 430,
+    "printed": "430 Fiber"
+  },
+  "n_Cluster": {
+    "value": 434,
+    "printed": "434 Cluster"
+  },
+  "n_Matrix": {
+    "value": 459,
+    "printed": "459 Matrix"
+  },
+  "n_MatrixSurface": {
+    "value": 462,
+    "printed": "462 MatrixSurface"
+  },
+  "grid_size": {
+    "value": 108,
+    "printed": "108 model configurations"
+  },
+  "grid_min": {
+    "value": 80.75965130759651,
+    "printed": "80.8%"
+  },
+  "grid_max": {
+    "value": 89.72602739726028,
+    "printed": "89.7%"
+  },
+  "grid_mean": {
+    "value": 86.6299986163,
+    "printed": "86.6%"
+  },
+  "grid_std": {
+    "value": 2.001495285459656,
+    "printed": "2.0%"
+  },
+  "mask_pairs": {
+    "value": 54,
+    "printed": "all 54 matched pairs"
+  },
+  "mask_mean": {
+    "value": 2.4768230247682292,
+    "printed": "2.48 percentage points"
+  },
+  "mask_min": {
+    "value": 0.5603985056039846,
+    "printed": "0.56"
+  },
+  "mask_max": {
+    "value": 4.9190535491905365,
+    "printed": "4.92"
+  },
+  "mask_t": {
+    "value": 17.79704139620589,
+    "printed": "t = 17.8"
+  },
+  "mask_sign_p": {
+    "value": 1.1102230246251565e-16,
+    "printed": "p = 1.1e-16"
+  },
+  "ft_mask_mean": {
+    "value": 0.9713574097135677,
+    "printed": "0.97 points"
+  },
+  "ft_mask_favouring": {
+    "value": 4,
+    "printed": "4 of 5 models improving"
+  },
+  "baseline_margin_min": {
+    "value": 4.296388542963896,
+    "printed": "4.3"
+  },
+  "baseline_margin_max": {
+    "value": 8.966376089663768,
+    "printed": "9.0 percentage points (over all 10 fine-tuned configurations)"
+  },
+  "closest_finetuned": {
+    "value": "vit_b16|masked",
+    "printed": "vit_b16|masked"
+  },
+  "worst_p_holm_significant": {
+    "value": true,
+    "printed": "True"
+  },
+  "frozen_none_significant": {
+    "value": false,
+    "printed": "no frozen encoder differs significantly"
+  },
+  "family_size": {
+    "value": 117,
+    "printed": "117 tests"
+  },
+  "refit_unreliable_rows": {
+    "value": [
+      "vit_b16/masked",
+      "vit_b16/nomask",
+      "convnextv2/masked",
+      "convnextv2/nomask"
+    ],
+    "printed": "vit_b16/masked, vit_b16/nomask, convnextv2/masked, convnextv2/nomask"
+  },
+  "luo_variant": {
+    "value": "l2",
+    "printed": "l2"
+  },
+  "luo_variants_run": {
+    "value": [
+      "l2"
+    ],
+    "printed": "l2"
+  },
+  "luo_cv": {
+    "value": 84.62046013041542,
+    "printed": "84.62"
+  },
+  "luo_cv_std": {
+    "value": 0.952203873715342,
+    "printed": "1.0"
+  },
+  "luo_test": {
+    "value": 87.70949720670392,
+    "printed": "87.71"
+  },
+  "luo_margin": {
+    "value": 4.918767764976863,
+    "printed": "4.9 percentage points"
+  },
+  "confusion": {
+    "value": [
+      [
+        39,
+        2,
+        1,
+        1
+      ],
+      [
+        0,
+        42,
+        2,
+        0
+      ],
+      [
+        0,
+        3,
+        43,
+        0
+      ],
+      [
+        0,
+        2,
+        2,
+        42
+      ]
+    ],
+    "printed": "[[39, 2, 1, 1], [0, 42, 2, 0], [0, 3, 43, 0], [0, 2, 2, 42]]"
+  },
+  "best_class": {
+    "value": "Cluster",
+    "printed": "Cluster (95%)"
+  },
+  "worst_class": {
+    "value": "Fiber",
+    "printed": "Fiber (91%)"
+  },
+  "nothing_assigned_to_fiber": {
+    "value": true,
+    "printed": "True"
+  },
+  "confusion_acc": {
+    "value": 92.73743016759776,
+    "printed": "92.7%"
+  }
+}
