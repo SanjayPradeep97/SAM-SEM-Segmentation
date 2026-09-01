@@ -2,8 +2,8 @@
 finetune_fit.py -- the end-to-end fine-tuning adapter for paper_protocol.run().
 
 The frozen probes and the fine-tuned CNNs go through the SAME protocol object,
-so the comparison the reviewers asked for is like-for-like: same 1,620
-development images, same five folds, same held-out 180, same rule for when the
+so the comparison the reviewers asked for is like-for-like: same 1,606
+development images, same five folds, same held-out 179, same rule for when the
 test set may be touched.  Only the model differs.
 
 `convnextv2` was listed in the plan but is not a key in finetune_baselines.MODELS;

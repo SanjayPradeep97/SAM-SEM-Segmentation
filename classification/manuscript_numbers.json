@@ -144,30 +144,32 @@
     "printed": "vit_b16/masked, vit_b16/nomask, convnextv2/masked, convnextv2/nomask"
   },
   "luo_variant": {
-    "value": "l2",
-    "printed": "l2"
+    "value": "none",
+    "printed": "none"
   },
   "luo_variants_run": {
     "value": [
-      "l2"
+      "blockl2",
+      "l2",
+      "none"
     ],
-    "printed": "l2"
+    "printed": "blockl2/l2/none"
   },
   "luo_cv": {
-    "value": 84.62046013041542,
-    "printed": "84.62"
+    "value": 85.4915733054701,
+    "printed": "85.49"
   },
   "luo_cv_std": {
-    "value": 0.952203873715342,
-    "printed": "1.0"
+    "value": 1.1628147181108486,
+    "printed": "1.2"
   },
   "luo_test": {
     "value": 87.70949720670392,
     "printed": "87.71"
   },
   "luo_margin": {
-    "value": 4.918767764976863,
-    "printed": "4.9 percentage points"
+    "value": 4.047654589922189,
+    "printed": "4.0 percentage points"
   },
   "confusion": {
     "value": [

@@ -52,7 +52,7 @@ ENCODERS = ["dinov2_b14", "sam_b16", "dinov3_b16", "dinov2_reg",
 
 # usam_b (micro-SAM) is deliberately NOT in the default roster.  Without
 # USAM_CHECKPOINT it loads samvit_base_patch16.sa1b -- byte-identical to
-# sam_b16 -- so a default run would extract features for 1,800 images and
+# sam_b16 -- so a default run would extract features for every image and
 # report a duplicate of SAM under a "micro-SAM" label.  It stays available
 # via `--encoders ... usam_b` once the checkpoint is set; the reviewer point
 # it answers (R1-L1) is better handled in the response letter, since micro-SAM
@@ -197,7 +197,7 @@ def stage_probes(args, device, encoders, pools, heads, masks, out_csv):
         rows.append(row)
         per_image.append(dict(
             key=f"{enc}[{geom[0]}]|{mk}|{pl}|{hd}",
-            oof_pred=r["_oof_pred"].astype(int).tolist(),   # 1,620 -- all
+            oof_pred=r["_oof_pred"].astype(int).tolist(),   # all dev images --
             y_dev=yd.astype(int).tolist(),                  # comparisons use
             pred_ensemble=r["_pred_ensemble"].astype(int).tolist(),
             pred_single=r["_pred_single"].astype(int).tolist(),

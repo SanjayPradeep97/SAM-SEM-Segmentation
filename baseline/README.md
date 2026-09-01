@@ -68,11 +68,24 @@ images. It is unsupervised and label-free, and any bias runs *in favour of* the
 baseline, but the CV figure is therefore not fully nested. The held-out test
 figure is clean: no test image enters the dictionary or the fit.
 
-## Results on `dataset_splits.pkl` (clean protocol)
+## Results on `dataset_splits.pkl`
 
-See `results/luo_baseline_summary.csv` for every run, including the leaky
-rows. The reported row is the clean run with the best CV accuracy; run
-`python ../classification/luo_results.py` to print the selection.
+| descriptor norm | protocol | CV accuracy (5-fold, 1,606 dev) | held-out test (179) |
+|---|---|---|---|
+| **`none`** | clean | **85.49 ± 1.16** | 87.71 (157/179) |
+| `l2` | clean | 84.62 ± 0.95 | 87.71 (157/179) |
+| `blockl2` | clean | 84.37 ± 0.98 | 87.71 (157/179) |
+| `none` | leaky | 85.31 ± 0.92 | 90.50 (162/179) |
+| `l2` | leaky | 84.81 ± 1.32 | 86.59 (155/179) |
+
+The reported row is `none`, the clean run with the best cross-validated
+accuracy (`python ../classification/luo_results.py` prints the selection).
+The three normalisations differ by about one point on CV and not at all on
+the test set. The leaky rows show what selecting the boosting rounds on the
+scored set does: up to +2.8 points on test for the same features, which is
+the mechanism behind the withdrawn figure of an earlier version of this work
+and why no leaky number is ever reported. Every run is in
+`results/luo_baseline_summary.csv` and the per-run JSON files.
 
 ## Running it
 

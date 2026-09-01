@@ -5,15 +5,15 @@ WHY OUT-OF-FOLD AND NOT THE TEST SET
 ------------------------------------
 The reviewer's objection is that the advantage over Luo et al. is too small to
 claim state of the art.  Answering it needs a PAIRED test, and it needs enough
-samples to resolve the gap.  On the 180-image test set, exact McNemar needs a
+samples to resolve the gap.  On a ~180-image test set, exact McNemar needs a
 ~5-6 pp difference before p<0.05:
 
     b=9,  c=3   (3.3 pp)  p = 0.146
     b=12, c=4   (4.4 pp)  p = 0.077
     b=15, c=5   (5.6 pp)  p = 0.041
 
-Essentially no comparison in this paper is resolvable at n=180.  The same test
-on the 1,620 out-of-fold predictions resolves 1.2-1.9 pp.  So every
+Essentially no comparison in this paper is resolvable at n=179.  The same test
+on the 1,606 out-of-fold predictions resolves 1.2-1.9 pp.  So every
 method-vs-method claim is made on OOF; the test set is reported once, for the
 pre-declared PRIMARY configuration only, as a Wilson interval.
 
@@ -154,7 +154,7 @@ def headline(rows, primary):
 
 
 def compare_all(oof_preds, y_dev, primary_key, min_pairs=1):
-    """Every method against PRIMARY, on 1,620 paired OOF predictions."""
+    """Every method against PRIMARY, on the paired OOF predictions (1,606 here)."""
     base = oof_preds[primary_key]
     labels, ps, out = [], [], []
     for key, pred in oof_preds.items():
