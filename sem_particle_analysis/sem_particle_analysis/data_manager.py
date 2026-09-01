@@ -8,6 +8,7 @@ import ast
 import math
 import os
 import re
+import tempfile
 import pandas as pd
 import random
 
@@ -102,14 +103,26 @@ class ResultsManager:
             csv_file = f"analysis_results_{suffix}.csv"
 
         self.csv_file = csv_file
+        # Only a manager that may create a file may also widen one.
+        self._writable = bool(auto_create)
 
         # Define column structure. nm_per_px is recorded so a row measured in
         # pixels — because no scale could be read — still says what it would have
         # been calibrated with, and so any nm value can be traced back.
+        #
+        # scale_method says how that number was arrived at, in the vocabulary of
+        # ScaleCalibration.provenance: "metadata", "box_ocr", "two_points",
+        # "manual", "none" when there was no scale at all, and a "+unconfirmed"
+        # suffix on any reading nothing has vouched for. Without it a scale read
+        # off a bar by OCR — which can misread a digit and rescale a whole
+        # image's measurements — is indistinguishable in the results from a pixel
+        # size the instrument itself recorded. An empty cell means the column did
+        # not exist when the row was written.
         self.columns = [
             "file_name",
             "num_particles",
             "nm_per_px",
+            "scale_method",
             "particle_areas_px",
             "equiv_diameters_px",
             "particle_areas_nm2",
@@ -135,9 +148,50 @@ class ResultsManager:
         """Load data from CSV file."""
         if self.csv_file is None or not os.path.exists(self.csv_file):
             return pd.DataFrame(columns=self.columns)
-        return pd.read_csv(self.csv_file)
+        return self._widen_to_schema(pd.read_csv(self.csv_file))
 
-    def add_result(self, file_name, measurements):
+    def _widen_to_schema(self, frame):
+        """
+        Give an older results file the columns it is missing.
+
+        Rows are appended in the order the file's own header uses, so a file
+        written before a column existed would go on being written without it —
+        silently, for the rest of that folder's run. Resuming a session would
+        then record less than starting a fresh one, which is the wrong way round.
+        Widening once, on load, is what stops that; columns the file has and this
+        schema does not are left alone.
+
+        Returns:
+            pd.DataFrame: The frame, widened if it needed it.
+        """
+        missing = [name for name in self.columns if name not in frame.columns]
+        if not missing or not self._writable:
+            return frame
+        frame = frame.reindex(columns=list(frame.columns) + missing)
+        self._rewrite(frame)
+        print(f"Added {', '.join(missing)} to {self.csv_file}")
+        return frame
+
+    def _rewrite(self, frame):
+        """
+        Replace the results file with ``frame``.
+
+        Through a temporary file in the same directory, so a failure part way
+        through cannot leave the analyst with a truncated results file — the one
+        thing in a session that cannot be recomputed.
+        """
+        directory = os.path.dirname(os.path.abspath(self.csv_file))
+        handle, temporary = tempfile.mkstemp(suffix=".csv", dir=directory)
+        os.close(handle)
+        try:
+            frame.to_csv(temporary, index=False)
+            os.replace(temporary, self.csv_file)
+        except BaseException:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+            raise
+
+    def add_result(self, file_name, measurements, scale_method=None):
         """
         Add a new analysis result to the CSV.
 
@@ -145,6 +199,10 @@ class ResultsManager:
             file_name (str): Name of the analyzed image file
             measurements (dict): Measurements dictionary from ParticleAnalyzer
                 Must contain: num_particles, areas_px, diameters_px
+            scale_method (str, optional): How the scale was established — see
+                ``ScaleCalibration.provenance``. Pass "none" when there was no
+                scale; leaving it None records nothing, which reads as "written
+                before this was tracked" rather than as an answer.
 
         Returns:
             bool: True if successful
@@ -169,6 +227,7 @@ class ResultsManager:
             "file_name": file_name,
             "num_particles": num_particles,
             "nm_per_px": measurements.get('nm_per_px'),
+            "scale_method": scale_method,
             "particle_areas_px": serialise_measurements(areas_px),
             "equiv_diameters_px": serialise_measurements(diams_px),
             "particle_areas_nm2": serialise_measurements(areas_nm2),

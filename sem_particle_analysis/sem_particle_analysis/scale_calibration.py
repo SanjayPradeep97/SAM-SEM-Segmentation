@@ -81,6 +81,19 @@ class ScaleCalibration:
         """Metadata is exact; anything else benefits from a human glance."""
         return self.method == "metadata" or self.confirmed
 
+    @property
+    def provenance(self):
+        """
+        How this scale was established, in a form the results file can carry.
+
+        Marked "+unconfirmed" when nothing has vouched for the reading — not the
+        instrument, not a person. Those are the rows to go back to when a
+        distribution looks wrong; without the mark they sit in the CSV
+        indistinguishable from a pixel size read straight out of the file, and a
+        misread bar rescales one image's numbers with nothing to point at it.
+        """
+        return self.method if self.trustworthy else f"{self.method}+unconfirmed"
+
     def summary(self):
         """One-line description for the UI."""
         text = f"{self.nm_per_px:.6g} nm/px  ·  {self.method_label}"

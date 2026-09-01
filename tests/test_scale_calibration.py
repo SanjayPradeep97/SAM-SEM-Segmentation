@@ -169,3 +169,29 @@ class TestNormaliseBox:
     def test_math_dist_matches_pixel_length(self):
         cal = sc.from_two_points((10, 10), (10, 60), 100, "nm")
         assert cal.pixel_length == pytest.approx(math.dist((10, 10), (10, 60)))
+
+
+class TestProvenance:
+    """
+    What the results file records about where a scale came from.
+
+    The plain method name means something vouched for it; the "+unconfirmed"
+    suffix marks the rows worth going back to.
+    """
+
+    def test_metadata_needs_no_qualification(self):
+        cal = sc.ScaleCalibration(nm_per_px=2.5, method="metadata")
+        assert cal.provenance == "metadata"
+
+    def test_an_unchecked_reading_is_marked(self):
+        cal = sc.ScaleCalibration(nm_per_px=2.5, method="box_ocr")
+        assert cal.provenance == "box_ocr+unconfirmed"
+
+    def test_confirming_removes_the_mark(self):
+        cal = sc.ScaleCalibration(nm_per_px=2.5, method="box_ocr")
+        cal.confirmed = True
+        assert cal.provenance == "box_ocr"
+
+    def test_two_clicked_points_are_vouched_for_as_they_are_made(self):
+        cal = sc.from_two_points((0, 0), (100, 0), 1, "µm")
+        assert cal.provenance == "two_points"

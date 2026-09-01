@@ -298,3 +298,67 @@ class TestCanvasCoordinates:
             np.zeros((width, width, 3), np.uint8)))
         assert payload["px_scale"] == pytest.approx(payload["w"] / width)
         assert payload["px_scale"] < 1
+
+
+class TestTheResultsFileSaysHowTheScaleWasSet:
+    """
+    The provenance has to survive the trip into the CSV, not just exist on the
+    calibration. Saving is the last point at which the two can be brought
+    together — afterwards there is only a float.
+    """
+
+    @pytest.fixture
+    def ready_to_save(self, app_state, tmp_path):
+        from sem_particle_analysis import ParticleAnalyzer, ResultsManager
+        from synthetic import make_disk_mask
+
+        mask, _ = make_disk_mask(shape=(200, 200),
+                                 centers_radii=((60, 60, 20), (140, 120, 20)))
+        analyzer = ParticleAnalyzer(conversion_factor=2.5, min_size=30)
+        analyzer.analyze_mask(mask, remove_border=False)
+
+        app_state.analyzer = analyzer
+        app_state.image_paths = [str(tmp_path / "a.tif")]
+        app_state.current_index = 0
+        app_state.results_manager = ResultsManager(
+            csv_file=str(tmp_path / "results.csv"))
+        yield app_state, tmp_path / "results.csv"
+        app_state.analyzer = None
+        app_state.results_manager = None
+
+    def saved_method(self, csv_path):
+        import pandas as pd
+
+        return pd.read_csv(csv_path)["scale_method"].iloc[0]
+
+    def test_an_ocr_reading_is_saved_as_unconfirmed(self, ready_to_save):
+        from sem_analysis_app.callbacks.results import save_current_results
+
+        state, csv_path = ready_to_save
+        state.scale_calibration = sc.ScaleCalibration(nm_per_px=2.5,
+                                                      method="box_ocr")
+        status, _gallery = save_current_results()
+        assert status.startswith("✅"), status
+        assert self.saved_method(csv_path) == "box_ocr+unconfirmed"
+
+    def test_confirming_first_changes_what_is_saved(self, ready_to_save):
+        from sem_analysis_app.callbacks.results import save_current_results
+        from sem_analysis_app.callbacks import scale_tab
+
+        state, csv_path = ready_to_save
+        state.scale_calibration = sc.ScaleCalibration(nm_per_px=2.5,
+                                                      method="box_ocr")
+        scale_tab.confirm_scale()
+        save_current_results()
+        assert self.saved_method(csv_path) == "box_ocr"
+
+    def test_measuring_in_pixels_says_so_rather_than_saying_nothing(self,
+                                                                    ready_to_save):
+        # An empty cell means the column did not exist yet; "none" means this
+        # image was measured with no scale at all.
+        from sem_analysis_app.callbacks.results import save_current_results
+
+        state, csv_path = ready_to_save
+        state.scale_calibration = None
+        save_current_results()
+        assert self.saved_method(csv_path) == "none"

@@ -22,9 +22,17 @@ def save_current_results():
         # Get measurements
         measurements = state.analyzer.get_measurements(in_nm=True)
 
+        # How the scale was arrived at goes in with the numbers it produced. An
+        # OCR reading nobody checked and a pixel size out of the file are the
+        # same float in the nm_per_px column, and only one of them can be wrong
+        # by a factor of seven.
+        calibration = getattr(state, "scale_calibration", None)
+        scale_method = calibration.provenance if calibration is not None else "none"
+
         # Save to CSV
         filename = os.path.basename(state.image_paths[state.current_index])
-        state.results_manager.add_result(filename, measurements)
+        state.results_manager.add_result(filename, measurements,
+                                         scale_method=scale_method)
 
         # Mark as processed
         state.mark_processed(state.current_index, measurements['num_particles'])
