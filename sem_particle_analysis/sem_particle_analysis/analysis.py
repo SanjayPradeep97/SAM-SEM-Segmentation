@@ -155,12 +155,19 @@ class ParticleAnalyzer:
 
         Args:
             mask (np.ndarray): Boolean mask
-            border_width (int): Width of border to clear (pixels)
+            border_width (int): Width of border to clear (pixels). Zero clears
+                nothing.
 
         Returns:
             np.ndarray: Cleaned boolean mask
         """
         cleaned = mask.copy()
+        if border_width <= 0:
+            # Guarded rather than left to the slicing below, which reads
+            # mask[-0:] as the whole array and so erases every pixel instead of
+            # none. --border-buffer 0 asked for no border to be cleared and got
+            # an empty mask and zero particles, with nothing to say why.
+            return cleaned
         H, W = mask.shape
 
         # Clear border strips
