@@ -224,3 +224,67 @@ class TestAnEmptyRedrawIsNotARefinement:
         assert "Nothing to redraw" in status
         # Nothing was committed, so nothing was pushed onto the undo stack.
         assert state.mask_history == []
+
+
+class TestAParticleWithAHoleIsDrawnWithIt:
+    """
+    A nanotube that loops back on itself encloses background, and that
+    background is not part of the particle. The mask keeps the hole and the
+    measurement excludes it — but the overlay used cv2.RETR_EXTERNAL, which
+    returns only outer boundaries, so the particle was drawn as a solid blob
+    however carefully the hole had been cut out. The one view whose job is to let
+    the mask be judged disagreed with the number.
+    """
+
+    @staticmethod
+    def ring(shape=(200, 200), centre=(100, 100), outer=60, inner=30):
+        rows, cols = np.ogrid[:shape[0], :shape[1]]
+        distance = np.hypot(rows - centre[0], cols - centre[1])
+        return (distance <= outer) & (distance >= inner), distance
+
+    def drawn(self, image):
+        """Pixels carrying the outline colour."""
+        return ((image[..., 0] > 200) & (image[..., 1] < 60) & (image[..., 2] < 60))
+
+    def test_the_hole_gets_an_outline(self):
+        from sem_analysis_app.visualization import create_particle_visualization
+        from skimage import measure
+
+        mask, distance = self.ring()
+        labelled = measure.label(mask, connectivity=2)
+        regions = measure.regionprops(labelled)
+        image = np.full((200, 200, 3), 128, dtype=np.uint8)
+
+        drawn = self.drawn(create_particle_visualization(
+            image, labelled, regions, show_labels=False))
+
+        assert drawn[distance > 55].any(), "no outer boundary drawn"
+        assert drawn[(distance > 26) & (distance < 34)].any(), \
+            "the hole was not outlined"
+
+    def test_the_hole_is_not_counted_in_the_area(self):
+        # The measurement side was always right; this pins it down so the two
+        # cannot drift apart again.
+        from skimage import measure
+
+        mask, _ = self.ring()
+        analyzer = ParticleAnalyzer(conversion_factor=1.0, min_size=30)
+        analyzer.analyze_mask(mask, remove_border=False)
+
+        assert len(analyzer.regions) == 1
+        area = analyzer.regions[0].area
+        filled = np.pi * 60 ** 2
+        assert area < 0.75 * filled, "the hole is being counted as particle"
+
+    def test_a_solid_particle_is_unchanged(self):
+        from sem_analysis_app.visualization import create_particle_visualization
+        from skimage import measure
+
+        rows, cols = np.ogrid[:200, :200]
+        distance = np.hypot(rows - 100, cols - 100)
+        labelled = measure.label(distance <= 60, connectivity=2)
+        image = np.full((200, 200, 3), 128, dtype=np.uint8)
+
+        drawn = self.drawn(create_particle_visualization(
+            image, labelled, measure.regionprops(labelled), show_labels=False))
+        assert not drawn[distance < 50].any(), "drew something inside a solid particle"
