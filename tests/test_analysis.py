@@ -366,3 +366,29 @@ class TestClickHitTesting:
         analyzer = ParticleAnalyzer(min_size=30)
         analyzer.analyze_mask(np.zeros((50, 50), dtype=np.uint8), remove_border=False)
         assert analyzer.find_particle_at_point(25, 25) == (None, None, None)
+
+
+class TestZeroBorderBufferClearsNothing:
+    """
+    ``border_buffer=0`` means "clear no border".
+
+    It used to mean "erase the mask": the border strips were cleared with
+    ``mask[-border_width:]``, and numpy reads ``mask[-0:]`` as the whole array.
+    Every particle vanished, the count came back zero, and nothing said why —
+    reachable from the batch CLI as ``--border-buffer 0``.
+    """
+
+    def test_particles_survive_a_zero_buffer(self):
+        mask, _ = make_disk_mask(shape=(200, 200),
+                                 centers_radii=((60, 60, 20), (140, 140, 20)))
+        analyzer = ParticleAnalyzer(conversion_factor=1.0, min_size=30)
+        count, _regions = analyzer.analyze_mask(mask, remove_border=True,
+                                                border_buffer=0)
+        assert count == 2
+
+    def test_a_real_buffer_still_clears_its_strip(self):
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[:6, :] = True          # a band along the top edge
+        analyzer = ParticleAnalyzer(conversion_factor=1.0, min_size=30)
+        analyzer.analyze_mask(mask, remove_border=True, border_buffer=4)
+        assert not analyzer.mask[:4, :].any()
