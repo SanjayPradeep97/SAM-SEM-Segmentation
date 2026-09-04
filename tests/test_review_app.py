@@ -164,13 +164,13 @@ class TestMovingThroughTheFolder:
 
     def test_it_stops_at_the_ends(self, opened):
         state, loading, _root, _frames = opened
-        _viz, _header, info, _table = loading.go_back()
+        _viz, _header, info, _table, _scale = loading.go_back()
         assert "first frame" in info
         assert state.current_index == 0
 
         state.current_index = 2
         loading.open_index(2)
-        _viz, _header, info, _table = loading.skip_to_next()
+        _viz, _header, info, _table, _scale = loading.skip_to_next()
         assert "No more frames" in info
 
     def test_saving_records_a_row_and_ticks_the_frame(self, opened):
@@ -186,7 +186,7 @@ class TestMovingThroughTheFolder:
 
     def test_save_and_next_moves_on(self, opened):
         state, loading, _root, _frames = opened
-        status, _gallery, _viz, _header, info, _table = loading.save_and_next()
+        status, _gallery, _viz, _header, info, _table, _scale = loading.save_and_next()
         assert status.startswith("✅")
         assert state.current_index == 1
 
@@ -196,7 +196,7 @@ class TestMovingThroughTheFolder:
         state.analyzer.delete_particles([state.analyzer.regions[0].label])
         assert len(state.analyzer.regions) == before - 1
 
-        _viz, _header, info, _table = loading.reload_frame()
+        _viz, _header, info, _table, _scale = loading.reload_frame()
         assert len(state.analyzer.regions) == before
         assert "Reloaded" in info
 
@@ -600,3 +600,158 @@ class TestFramesAreNamedAsTheAnalysisNamedThem:
         assert loading.recorded_name() is None
         status, _gallery = loading.save_here()
         assert status.startswith("✅")
+
+
+class TestTheScalePanel:
+    """
+    Correcting a mask cannot fix a misread bar.
+
+    Every row a batch writes says "+unconfirmed", and two frames in the NIOSH
+    set read a "1 um" bar as "7 um" — every size on them seven times too large.
+    The panel exists so that both can be dealt with from the same screen as the
+    mask: look at what the bar measures, say it is right, or measure it again by
+    hand.
+    """
+
+    def test_it_says_when_nobody_has_checked(self, opened):
+        from sem_review_app import scale
+
+        text = scale.summary()
+        assert "2.5 nm/px" in text
+        assert "nobody has checked" in text
+
+    def test_confirming_changes_what_gets_saved(self, opened):
+        import pandas as pd
+        from sem_review_app import scale
+
+        state, loading, root, _frames = opened
+        assert state.scale_calibration.provenance == "box_ocr+unconfirmed"
+
+        status, summary, _header = scale.confirm()
+        assert status.startswith("✅")
+        assert "confirmed" in summary
+        assert state.scale_calibration.provenance == "box_ocr"
+
+        loading.save_here()
+        saved = pd.read_csv(root / loading.REVIEWED_CSV)
+        assert saved["scale_method"].iloc[0] == "box_ocr"
+
+    def test_clicks_go_to_the_bar_while_it_is_asking(self, opened):
+        from sem_review_app import loading, scale
+
+        class Event:
+            def __init__(self, x, y):
+                self.index = (x, y)
+
+        state, _loading, _root, _frames = opened
+        assert scale.clicking() is False
+
+        scale.start_points()
+        assert scale.clicking() is True
+        _viz, status = loading.review_click(Event(10, 20))
+        assert "One end" in status
+        _viz, status = loading.review_click(Event(110, 20))
+        assert "100.0 px" in status
+        assert len(state.scale_points) == 2
+
+    def test_a_third_click_starts_again(self, opened):
+        from sem_review_app import scale
+
+        state, _loading, _root, _frames = opened
+        scale.start_points()
+        for point in ((10, 20), (110, 20), (50, 50)):
+            scale.add_point(*point)
+        assert state.scale_points == [(50.0, 50.0)]
+
+    def test_two_points_replace_the_scale_and_the_sizes(self, opened):
+        from sem_review_app import scale
+
+        state, _loading, _root, _frames = opened
+        before = state.analyzer.get_measurements(in_nm=True)["diameters"][0]
+
+        scale.start_points()
+        scale.add_point(10, 20)
+        scale.add_point(110, 20)          # 100 px
+        _viz, status, summary, _header, _table = scale.apply_points(500, "nm")
+
+        # 500 nm over 100 px is 5 nm/px, twice the 2.5 the analysis recorded.
+        assert state.scale_calibration.nm_per_px == pytest.approx(5.0)
+        assert state.analyzer.conversion == pytest.approx(5.0)
+        after = state.analyzer.get_measurements(in_nm=True)["diameters"][0]
+        assert after == pytest.approx(2 * before)
+        assert "2x" in status
+        assert "confirmed" in summary
+
+    def test_a_hand_measured_scale_is_saved_as_such(self, opened):
+        import pandas as pd
+        from sem_review_app import scale
+
+        _state, loading, root, _frames = opened
+        scale.start_points()
+        scale.add_point(10, 20)
+        scale.add_point(110, 20)
+        scale.apply_points(500, "nm")
+        loading.save_here()
+
+        saved = pd.read_csv(root / loading.REVIEWED_CSV)
+        assert saved["scale_method"].iloc[0] == "two_points"
+        assert saved["nm_per_px"].iloc[0] == pytest.approx(5.0)
+
+    def test_the_fix_survives_leaving_the_frame(self, opened):
+        from sem_review_app import scale
+
+        state, loading, _root, _frames = opened
+        scale.start_points()
+        scale.add_point(10, 20)
+        scale.add_point(110, 20)
+        scale.apply_points(500, "nm")
+
+        loading.skip_to_next()
+        loading.go_back()
+        assert state.scale_calibration.nm_per_px == pytest.approx(5.0)
+
+    def test_applying_without_two_points_says_so(self, opened):
+        from sem_review_app import scale
+
+        scale.start_points()
+        _viz, status, _summary, _header, _table = scale.apply_points(500, "nm")
+        assert "both ends" in status
+
+    def test_applying_without_a_length_says_so(self, opened):
+        from sem_review_app import scale
+
+        scale.start_points()
+        scale.add_point(10, 20)
+        scale.add_point(110, 20)
+        _viz, status, _summary, _header, _table = scale.apply_points(None, "nm")
+        assert "printed" in status
+
+    def test_two_points_in_the_same_place_are_refused(self, opened):
+        from sem_review_app import scale
+
+        scale.start_points()
+        scale.add_point(10, 20)
+        scale.add_point(10, 21)
+        _viz, status, _summary, _header, _table = scale.apply_points(500, "nm")
+        assert status.startswith("❌")
+
+    def test_cancelling_gives_the_clicks_back_to_the_mask(self, opened):
+        from sem_review_app import scale
+
+        state, _loading, _root, _frames = opened
+        scale.start_points()
+        scale.add_point(10, 20)
+        status, picture = scale.clear_points()
+        assert scale.clicking() is False
+        assert state.scale_points == []
+        assert "editing the mask" in status
+
+    def test_opening_a_frame_stops_it_asking_for_ends(self, opened):
+        # Otherwise the next frame's first click silently becomes a bar end.
+        from sem_review_app import scale
+
+        state, loading, _root, _frames = opened
+        scale.start_points()
+        loading.skip_to_next()
+        assert scale.clicking() is False
+        assert state.scale_points == []

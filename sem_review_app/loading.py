@@ -160,10 +160,12 @@ def open_index(index):
     Put the frame at ``index`` and its saved mask on screen.
 
     Returns:
-        tuple: (visualisation, header, info, measurements)
+        tuple: (visualisation, header, info, measurements, scale summary)
     """
+    from . import scale as scale_panel
+
     if not state.image_paths or not 0 <= index < len(state.image_paths):
-        return None, frame_header(), "No more frames", None
+        return None, frame_header(), "No more frames", None, scale_panel.summary()
 
     state.current_index = index
     state.reset_image_state()
@@ -192,16 +194,22 @@ def open_index(index):
     measurements = analyzer.get_measurements(in_nm=nm_per_px is not None)
     info = (f"{stem} — {index + 1} of {len(state.image_paths)}, "
             f"{measurements['num_particles']} from the analysis")
+    # A frame opens with the mask editable and the scale panel showing what it
+    # will be measured with, which is the thing most easily taken on trust.
+    state.scale_click_mode = False
+    state.scale_points = []
     return (create_particle_visualization(state.cropped_image,
                                           analyzer.labeled_mask, analyzer.regions,
                                           show_labels=state.show_particle_numbers),
-            frame_header(), info, create_results_dataframe(measurements))
+            frame_header(), info, create_results_dataframe(measurements),
+            scale_panel.summary())
 
 
 def select_from_gallery(evt: gr.SelectData):
     """Open the clicked frame, and go to the tab that edits it."""
-    viz, header, info, table = open_index(evt.index)
-    return viz, header, info, table, gr.Tabs(selected=2), "delete"
+    viz, header, info, table, scale_summary = open_index(evt.index)
+    return (viz, header, info, table, scale_summary, gr.Tabs(selected=2),
+            "delete")
 
 
 def save_and_next():
@@ -215,36 +223,36 @@ def save_and_next():
 
     status, _gallery = save_current_results(recorded_name())
     if not status.startswith("✅"):
-        return (status, gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update())
+        return (status,) + (gr.update(),) * 6
 
-    viz, header, info, table = open_index(state.current_index + 1)
+    viz, header, info, table, scale_summary = open_index(state.current_index + 1)
     if viz is None:
         return (f"{status} — that was the last frame.", gallery_items(),
-                gr.update(), header, info, gr.update())
-    return status, gallery_items(), viz, header, info, table
+                gr.update(), header, info, gr.update(), scale_summary)
+    return status, gallery_items(), viz, header, info, table, scale_summary
 
 
 def skip_to_next():
     """Move on without recording anything."""
-    viz, header, info, table = open_index(state.current_index + 1)
+    viz, header, info, table, scale_summary = open_index(state.current_index + 1)
     if viz is None:
-        return gr.update(), header, "No more frames", gr.update()
-    return viz, header, info, table
+        return gr.update(), header, "No more frames", gr.update(), scale_summary
+    return viz, header, info, table, scale_summary
 
 
 def go_back():
     """Open the previous frame."""
-    viz, header, info, table = open_index(state.current_index - 1)
+    viz, header, info, table, scale_summary = open_index(state.current_index - 1)
     if viz is None:
-        return gr.update(), header, "Already at the first frame", gr.update()
-    return viz, header, info, table
+        return (gr.update(), header, "Already at the first frame", gr.update(),
+                scale_summary)
+    return viz, header, info, table, scale_summary
 
 
 def reload_frame():
     """Throw away every edit and put the analysis's own mask back."""
-    viz, header, info, table = open_index(state.current_index)
-    return viz, header, f"Reloaded — {info}", table
+    viz, header, info, table, scale_summary = open_index(state.current_index)
+    return viz, header, f"Reloaded — {info}", table, scale_summary
 
 
 def current_overlay_path():
@@ -300,3 +308,19 @@ def restore():
     return (f"✅ {len(state.image_paths)} frames from {Path(root).name}"
             + (f", {done} already reviewed" if done else ""),
             gallery_items(), str(root))
+
+
+def review_click(evt: gr.SelectData):
+    """
+    One click on the frame, routed by what the analyst is doing.
+
+    While the scale panel is asking for the ends of the bar, a click means an
+    end; otherwise it means a particle. One image, one click stream, so the
+    refinement tools and the scale tool cannot both think a click was theirs.
+    """
+    from sem_analysis_app.callbacks import handle_image_click
+    from . import scale
+
+    if scale.clicking():
+        return scale.add_point(evt.index[0], evt.index[1])
+    return handle_image_click(evt)
