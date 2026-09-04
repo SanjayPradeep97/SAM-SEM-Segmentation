@@ -283,7 +283,7 @@ def create_interface():
             delete_result_row, inputs=[row_picker],
             outputs=[session_table, summary_progress, summary_stats, row_picker,
                      export_status])
-        export_btn.click(export_results, outputs=[export_file])
+        export_btn.click(export_results, outputs=[export_file, export_status])
         plots_btn.click(update_histogram_plots, outputs=[plots_image, plots_status])
 
     return app

@@ -180,6 +180,7 @@ class TestMovingThroughTheFolder:
 
         reviewed = ResultsManager(csv_file=str(root / loading.REVIEWED_CSV),
                                   auto_create=False).get_results()
+        # Under the name the analysis used, so the two files line up on it.
         assert list(reviewed["file_name"]) == ["X1_0001.png"]
         assert gallery[0][1].startswith("✅")
 
@@ -379,12 +380,38 @@ class TestEveryControl:
         assert len(outputs) == 5
         assert "Deleted" in outputs[4]
 
-    def test_exporting(self, opened):
+    def test_exporting_hands_over_a_file_that_exists(self, opened):
+        # Gradio serves only what it is allowed to read, and the results file
+        # sits beside the images on another drive. Returning that path made the
+        # download button do nothing, silently. The export is a copy, in a
+        # directory Gradio will serve.
+        from pathlib import Path
+
+        from sem_analysis_app.callbacks import export_results
+
+        _state, loading, root, _frames = opened
+        loading.save_here()
+        path, status = export_results()
+        assert path is not None and Path(path).exists()
+        assert Path(path).parent != root, "exported from the results folder itself"
+        assert "1 rows" in status and str(root) in status
+
+    def test_the_export_holds_the_results(self, opened):
+        import pandas as pd
         from sem_analysis_app.callbacks import export_results
 
         _state, loading, _root, _frames = opened
         loading.save_here()
-        assert export_results() is not None
+        loading.save_and_next()
+        path, _status = export_results()
+        assert list(pd.read_csv(path)["file_name"]) == ["X1_0001.png", "X1_0001.png"]
+
+    def test_exporting_nothing_says_so(self, opened):
+        from sem_analysis_app.callbacks import export_results
+
+        path, status = export_results()
+        assert path is None
+        assert "save a frame first" in status
 
     def test_the_plots(self, opened):
         from sem_analysis_app.callbacks import update_histogram_plots
@@ -520,3 +547,56 @@ class TestTheLauncher:
         monkeypatch.setattr(ui, "create_interface", lambda: Blocks())
         with pytest.raises(OSError, match="on fire"):
             launcher.main(["--port", "7870"])
+
+
+class TestFramesAreNamedAsTheAnalysisNamedThem:
+    """
+    The app reads PNG copies; the analysis measured TIFFs.
+
+    Saving under the PNG's own name left reviewed_results.csv keyed
+    "O1_0001.png" against analysis_results.csv's "O1_0001.tif", so the automatic
+    and the reviewed answer for one frame could not be joined at all.
+    """
+
+    def test_the_reviewed_row_uses_the_analysis_name(self, tmp_path):
+        import pandas as pd
+        from sem_analysis_app.state import state
+        from sem_review_app import loading
+
+        # An analysis that measured TIFFs, reviewed from PNG copies.
+        root = tmp_path / "T1_analysis"
+        for sub in ("raw", "mask"):
+            (root / sub).mkdir(parents=True)
+        mask, _ = make_disk_mask(shape=(200, 200), centers_radii=((100, 100, 30),))
+        Image.fromarray(np.where(mask, 30, 200).astype(np.uint8)).save(
+            root / "raw" / "T1_0001.png")
+        Image.fromarray((mask * 255).astype(np.uint8)).save(
+            root / "mask" / "T1_0001.png")
+
+        from sem_particle_analysis import ParticleAnalyzer
+
+        analyzer = ParticleAnalyzer(conversion_factor=2.0, min_size=30)
+        analyzer.analyze_mask(mask, min_size=30, remove_border=False)
+        ResultsManager(csv_file=str(root / "analysis_results.csv")).add_result(
+            "T1_0001.tif", analyzer.get_measurements(in_nm=True),
+            scale_method="box_ocr")
+
+        loading.load_folder(str(root), min_size=30)
+        loading.open_index(0)
+        assert loading.recorded_name() == "T1_0001.tif"
+        loading.save_here()
+
+        reviewed = pd.read_csv(root / loading.REVIEWED_CSV)
+        assert list(reviewed["file_name"]) == ["T1_0001.tif"]
+        state.analyzer = None
+        state.results_manager = None
+        state.image_paths = []
+
+    def test_it_falls_back_to_the_file_it_opened(self, opened):
+        # No analysis CSV, or a frame missing from it: the PNG's own name is
+        # still better than nothing.
+        state, loading, _root, _frames = opened
+        state.review_names = {}
+        assert loading.recorded_name() is None
+        status, _gallery = loading.save_here()
+        assert status.startswith("✅")
