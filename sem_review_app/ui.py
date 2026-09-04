@@ -219,6 +219,11 @@ def create_interface():
         # ----------------------------------------------------------- wiring
         REVIEW_OUTPUTS = [review_viz, header, frame_info, frame_results]
 
+        # A folder opened by --folder, or before a refresh, is still open in the
+        # process; the gallery is per-connection and would come up empty.
+        app.load(loading.restore,
+                 outputs=[load_status, gallery, folder_input])
+
         load_btn.click(loading.load_folder,
                        inputs=[folder_input, min_size_input],
                        outputs=[load_status, gallery])

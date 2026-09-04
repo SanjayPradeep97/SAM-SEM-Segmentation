@@ -268,3 +268,23 @@ def save_here():
 
     status, _gallery = save_current_results()
     return status, gallery_items()
+
+
+def restore():
+    """
+    Put the open folder back on screen when a browser connects.
+
+    The app keeps one process-wide state, so a folder opened by --folder, or
+    before a refresh, is still open — but the gallery is per-connection and comes
+    up empty, which looks like nothing was loaded.
+
+    Returns:
+        tuple: (status, gallery, folder_path)
+    """
+    root = getattr(state, "review_root", None)
+    if root is None or not state.image_paths:
+        return "", [], ""
+    done = sum(1 for i in range(len(state.image_paths)) if state.is_processed(i))
+    return (f"✅ {len(state.image_paths)} frames from {Path(root).name}"
+            + (f", {done} already reviewed" if done else ""),
+            gallery_items(), str(root))
