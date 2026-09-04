@@ -111,6 +111,9 @@ def load_folder(folder, min_size=DEFAULT_MIN_SIZE):
 
     # What the analysis said, so an image opens with its own scale.
     state.review_scales = {}
+    # What the analysis called each frame — the TIFF it came from, not the PNG
+    # copy this app reads — so the two results files line up.
+    state.review_names = {}
     automatic = root / "analysis_results.csv"
     if automatic.exists():
         table = ResultsManager(csv_file=str(automatic), auto_create=False).get_results()
@@ -118,6 +121,7 @@ def load_folder(folder, min_size=DEFAULT_MIN_SIZE):
             stem = Path(str(row["file_name"])).stem
             state.review_scales[stem] = (row.get("nm_per_px"),
                                          row.get("scale_method"))
+            state.review_names[stem] = str(row["file_name"])
 
     state.results_manager = ResultsManager(csv_file=str(root / REVIEWED_CSV))
     reviewed, _unmatched = state.sync_processed_from_csv()
@@ -209,7 +213,7 @@ def save_and_next():
     """
     from sem_analysis_app.callbacks.results import save_current_results
 
-    status, _gallery = save_current_results()
+    status, _gallery = save_current_results(recorded_name())
     if not status.startswith("✅"):
         return (status, gr.update(), gr.update(), gr.update(), gr.update(),
                 gr.update())
@@ -252,6 +256,14 @@ def current_overlay_path():
     return str(picture) if picture.exists() else None
 
 
+def recorded_name():
+    """The name to save the open frame under: the one the analysis used."""
+    if not state.image_paths:
+        return None
+    stem = Path(state.image_paths[state.current_index]).stem
+    return getattr(state, "review_names", {}).get(stem)
+
+
 def current_header():
     """The header line, after an edit changed the count."""
     return frame_header()
@@ -266,7 +278,7 @@ def save_here():
     """
     from sem_analysis_app.callbacks.results import save_current_results
 
-    status, _gallery = save_current_results()
+    status, _gallery = save_current_results(recorded_name())
     return status, gallery_items()
 
 
