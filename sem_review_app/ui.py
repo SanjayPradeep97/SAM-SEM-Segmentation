@@ -32,7 +32,7 @@ from sem_analysis_app.callbacks import (
     undo_last_action,
     update_histogram_plots,
 )
-from . import loading
+from . import loading, scale
 
 # Same tools, same values, as the main app's rail.
 REFINE_MODES = [
@@ -127,6 +127,34 @@ def create_interface():
                 frame_info = gr.Textbox(label="", interactive=False,
                                         show_label=False)
 
+                with gr.Accordion("📏 Scale — check it before trusting the sizes",
+                                  open=False):
+                    scale_summary = gr.Markdown("Open a frame to see its scale.")
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            check_bar_btn = gr.Button("🔍 Check the bar")
+                            confirm_scale_btn = gr.Button("✔️ Confirm scale",
+                                                          variant="primary")
+                            gr.Markdown(
+                                "If the reading is wrong, measure it by hand: "
+                                "click one end of the bar, then the other, then "
+                                "type the length printed beside it.")
+                            points_btn = gr.Button("📏 Click the bar's ends")
+                            with gr.Row():
+                                bar_value = gr.Number(label="Printed length",
+                                                      value=None)
+                                bar_unit = gr.Dropdown(choices=scale.UNITS,
+                                                       value="µm", label="Unit")
+                            apply_points_btn = gr.Button("Apply the two points",
+                                                         variant="primary")
+                            cancel_points_btn = gr.Button("Cancel", size="sm")
+                        with gr.Column(scale=2):
+                            scale_check_img = gr.Image(
+                                label="What the bar measures", height=210,
+                                interactive=False)
+                    scale_status = gr.Textbox(label="", interactive=False,
+                                              show_label=False)
+
                 with gr.Row():
                     with gr.Column(scale=1, elem_classes=["tool-rail"]):
                         gr.Markdown("### Tool", elem_classes=["step-title"])
@@ -217,7 +245,8 @@ def create_interface():
                                           show_label=False)
 
         # ----------------------------------------------------------- wiring
-        REVIEW_OUTPUTS = [review_viz, header, frame_info, frame_results]
+        REVIEW_OUTPUTS = [review_viz, header, frame_info, frame_results,
+                          scale_summary]
 
         # A folder opened by --folder, or before a refresh, is still open in the
         # process; the gallery is per-connection and would come up empty.
@@ -240,7 +269,21 @@ def create_interface():
         reset_points_btn.click(reset_point_refine,
                                outputs=[review_viz, review_status])
 
-        review_viz.select(handle_image_click, outputs=[review_viz, review_status])
+        # Routed: while the scale panel is collecting the bar's ends, a click
+        # on the frame is an end rather than a particle.
+        review_viz.select(loading.review_click, outputs=[review_viz, review_status])
+
+        check_bar_btn.click(scale.check_bar,
+                            outputs=[scale_check_img, scale_status, scale_summary])
+        confirm_scale_btn.click(scale.confirm,
+                                outputs=[scale_status, scale_summary, header])
+        points_btn.click(scale.start_points, outputs=[scale_status, review_viz])
+        cancel_points_btn.click(scale.clear_points,
+                                outputs=[scale_status, review_viz])
+        apply_points_btn.click(
+            scale.apply_points, inputs=[bar_value, bar_unit],
+            outputs=[review_viz, scale_status, scale_summary, header,
+                     frame_results])
 
         apply_btn.click(apply_refinement_changes,
                         outputs=[review_viz, frame_results, review_status,
@@ -272,7 +315,7 @@ def create_interface():
         save_next_btn.click(
             loading.save_and_next,
             outputs=[save_status, gallery, review_viz, header, frame_info,
-                     frame_results])
+                     frame_results, scale_summary])
 
         refresh_btn.click(get_session_summary,
                           outputs=[session_table, summary_progress,
