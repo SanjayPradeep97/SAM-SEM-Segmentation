@@ -81,6 +81,14 @@ def handle_image_click(evt: gr.SelectData):
 
         x, y = evt.index[0], evt.index[1]
 
+        if state.click_mode in ("add", "point_refine") and state.segmenter is None:
+            # These two ask SAM what is under the click; the other two only
+            # read the mask. Said plainly, because the alternative was an
+            # AttributeError on None reported as "SAM refinement failed".
+            return (get_current_visualization(),
+                    "⚠️ This tool needs a model — load a SAM checkpoint on "
+                    "the Setup tab. Remove and Merge work without one.")
+
         if state.click_mode == "delete":
             # DELETE MODE: Click particles to remove them
             region, idx, label = state.analyzer.find_particle_at_point(x, y)
@@ -110,6 +118,10 @@ def handle_image_click(evt: gr.SelectData):
             try:
                 # Save pending state before modification (for undo of this click)
                 state.save_pending_state()
+
+                # Encoding is skipped when this image is already the encoded
+                # one, so asking costs nothing and saves the caller tracking it.
+                state.segmenter.encode_image(state.cropped_image)
 
                 # Use single positive point WITHOUT base_mask to segment just the clicked particle
                 refined_mask, score = state.segmenter.refine_with_sam(
@@ -165,6 +177,7 @@ def handle_image_click(evt: gr.SelectData):
 
             # Save pending state before adding point (for undo of this click)
             state.save_pending_state()
+            state.segmenter.encode_image(state.cropped_image)
 
             # Check if user clicked on an existing particle (only on first click)
             if len(state.point_refine_points) == 0:
