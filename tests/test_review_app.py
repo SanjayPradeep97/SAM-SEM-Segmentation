@@ -471,3 +471,52 @@ class TestReconnecting:
         state.image_paths = []
         state.review_root = None
         assert loading.restore() == ("", [], "")
+
+
+class TestTheLauncher:
+    """
+    A busy port is ordinary, not an error worth a stack trace.
+
+    Two of these apps and the analysis app may all be running; whichever starts
+    second used to die with Gradio's OSError.
+    """
+
+    def test_it_moves_to_the_next_port(self, monkeypatch):
+        from sem_review_app import __main__ as launcher
+        from sem_review_app import ui
+
+        tried = []
+
+        class Blocks:
+            def launch(self, **kwargs):
+                tried.append(kwargs["server_port"])
+                if len(tried) < 3:
+                    raise OSError("Cannot find empty port in range: x-x")
+
+        monkeypatch.setattr(ui, "create_interface", lambda: Blocks())
+        launcher.main(["--port", "7870"])
+        assert tried == [7870, 7871, 7872]
+
+    def test_strict_port_does_not_wander(self, monkeypatch):
+        from sem_review_app import __main__ as launcher
+        from sem_review_app import ui
+
+        class Blocks:
+            def launch(self, **kwargs):
+                raise OSError("Cannot find empty port in range: x-x")
+
+        monkeypatch.setattr(ui, "create_interface", lambda: Blocks())
+        with pytest.raises(SystemExit):
+            launcher.main(["--port", "7870", "--strict-port"])
+
+    def test_another_oserror_is_not_swallowed(self, monkeypatch):
+        from sem_review_app import __main__ as launcher
+        from sem_review_app import ui
+
+        class Blocks:
+            def launch(self, **kwargs):
+                raise OSError("the network is on fire")
+
+        monkeypatch.setattr(ui, "create_interface", lambda: Blocks())
+        with pytest.raises(OSError, match="on fire"):
+            launcher.main(["--port", "7870"])
