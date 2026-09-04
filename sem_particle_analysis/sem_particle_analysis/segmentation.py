@@ -40,9 +40,16 @@ class ParticleSegmenter:
         Encode image features using SAM encoder (expensive operation).
         Call this once per image, then use refine_with_sam with image_already_encoded=True.
 
+        Calling it again with the same image does nothing, so callers that need
+        an encoded image can simply ask for one rather than tracking whether
+        somebody else has already done it.
+
         Args:
             image (np.ndarray): RGB image array (H, W, 3)
         """
+        if (self.current_encoded_image is not None
+                and np.array_equal(self.current_encoded_image, image)):
+            return
         print("Encoding image with SAM...")
         self.sam_model.set_image(image)
         self.current_encoded_image = image

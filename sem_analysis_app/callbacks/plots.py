@@ -41,7 +41,11 @@ def update_histogram_plots():
         }
 
         # Create histograms
-        from visualization import create_histogram_plots
+        # Relative, like every other import in this package. As an absolute
+        # import this resolved only if the working directory happened to be
+        # sem_analysis_app, so the Plots tab reported "No module named
+        # 'visualization'" wherever the app is actually launched from.
+        from ..visualization import create_histogram_plots
         histogram_img = create_histogram_plots(combined_measurements)
 
         return histogram_img, f"✅ Generated histograms for {total_particles} particles from {len(results_df)} images"
