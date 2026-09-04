@@ -440,3 +440,34 @@ class TestTheShapeOfWhatCallbacksReturn:
         assert isinstance(table, pd.DataFrame)
         assert isinstance(progress, str) and isinstance(stats, str)
         assert isinstance(dropdown, dict) and "choices" in dropdown
+
+
+class TestReconnecting:
+    """
+    A browser that connects to an already-open folder must see it.
+
+    The state is process-wide, the gallery is per-connection: opening a folder
+    with --folder, or refreshing the page, left the gallery empty and the app
+    looking like it had loaded nothing.
+    """
+
+    def test_a_fresh_connection_gets_the_open_folder(self, opened):
+        _state, loading, root, _frames = opened
+        status, gallery, folder = loading.restore()
+        assert "3 frames" in status
+        assert len(gallery) == 3
+        assert folder == str(root)
+
+    def test_it_says_how_many_are_already_reviewed(self, opened):
+        _state, loading, _root, _frames = opened
+        loading.save_here()
+        status, _gallery, _folder = loading.restore()
+        assert "1 already reviewed" in status
+
+    def test_nothing_open_returns_nothing(self):
+        from sem_analysis_app.state import state
+        from sem_review_app import loading
+
+        state.image_paths = []
+        state.review_root = None
+        assert loading.restore() == ("", [], "")
