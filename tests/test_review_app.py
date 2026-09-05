@@ -755,3 +755,46 @@ class TestTheScalePanel:
         loading.skip_to_next()
         assert scale.clicking() is False
         assert state.scale_points == []
+
+
+class TestReviewedFramesComeBackTicked:
+    """
+    The gallery has to show what has already been done.
+
+    Ticks were matched on the full file name. The review app reads PNG copies of
+    frames the analysis measured as TIFFs, so the names never agreed and a folder
+    reopened after a break looked untouched — with no way to tell which frames
+    still needed doing except by opening every one.
+    """
+
+    def test_a_saved_frame_is_ticked_when_the_folder_is_reopened(self, opened):
+        state, loading, root, _frames = opened
+        loading.save_here()
+
+        status, gallery = loading.load_folder(str(root), min_size=30)
+        assert "1 already reviewed" in status
+        assert gallery[0][1].startswith("✅")
+        assert all(item[1].startswith("⚪") for item in gallery[1:])
+
+    def test_it_matches_across_a_change_of_extension(self, opened):
+        # What the analysis recorded as .tif is read here as .png.
+        import pandas as pd
+
+        state, loading, root, _frames = opened
+        loading.save_here()
+
+        path = root / loading.REVIEWED_CSV
+        table = pd.read_csv(path)
+        table["file_name"] = [n.replace(".png", ".tif") for n in table.file_name]
+        table.to_csv(path, index=False)
+
+        status, gallery = loading.load_folder(str(root), min_size=30)
+        assert "1 already reviewed" in status
+        assert gallery[0][1].startswith("✅")
+
+    def test_the_count_shown_is_the_reviewed_one(self, opened):
+        state, loading, _root, _frames = opened
+        state.analyzer.delete_particles([state.analyzer.regions[0].label])
+        loading.save_here()
+        _status, gallery, _folder = loading.restore()
+        assert "(2)" in gallery[0][1]
