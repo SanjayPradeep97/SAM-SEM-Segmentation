@@ -8,6 +8,11 @@ put the scale back so the numbers come out in nanometres.
 
 Nothing here segments. That is the point — a review pass should not be able to
 change a mask by accident, only by a click that says so.
+
+Corrections belong to the frame, not to the visit. Leaving a frame writes the
+mask as the analyst left it, so coming back to it shows their work rather than
+the batch's first guess, and closing the app does not throw the difference
+away.
 """
 
 import os
@@ -17,11 +22,14 @@ import gradio as gr
 import numpy as np
 from PIL import Image
 
-from sem_analysis_app.callbacks.refinement import get_current_visualization
+from sem_analysis_app.callbacks.refinement import (get_current_visualization,
+                                                   set_click_mode,
+                                                   set_point_type)
 from sem_analysis_app.callbacks.scale_tab import frame_header
 from sem_analysis_app.state import state
 from sem_analysis_app.visualization import (create_particle_visualization,
-                                            create_results_dataframe)
+                                            create_results_dataframe,
+                                            create_summary_statistics_table)
 from sem_particle_analysis import ParticleAnalyzer, ResultsManager
 from sem_particle_analysis import scale_calibration as sc
 from sem_particle_analysis.data_manager import parse_measurement_list
@@ -29,6 +37,10 @@ from sem_particle_analysis.data_manager import parse_measurement_list
 # Where a reviewed folder keeps its own answers. Kept apart from
 # analysis_results.csv so the automatic pass stays on disk to compare against.
 REVIEWED_CSV = "reviewed_results.csv"
+# Likewise for the masks: the analyst's version goes beside the batch's, never
+# over it. "Reload from the analysis" has to have something to reload.
+EDITED_MASKS = "mask_reviewed"
+EDITED_OVERLAYS = "overlay_reviewed"
 # Objects below this are dropped when a mask is loaded. Matches the batch's own
 # floor; raising it here re-filters a mask that was made with a lower one.
 DEFAULT_MIN_SIZE = 200
@@ -100,6 +112,10 @@ def load_folder(folder, min_size=DEFAULT_MIN_SIZE):
     except FolderProblem as problem:
         return f"❌ {problem}", None
 
+    # Before review_root moves: whatever is on screen belongs to the folder
+    # being left, and its corrections have to be written there.
+    remember_edit()
+
     root = Path(folder)
     state.review_root = root
     state.review_masks = masks
@@ -107,6 +123,10 @@ def load_folder(folder, min_size=DEFAULT_MIN_SIZE):
     state.current_index = 0
     state.processed_images = {}
     state.min_particle_size = int(min_size)
+    # Re-read from disk rather than trusting what this process happens to
+    # remember, so re-opening a folder picks up corrections made since.
+    state.review_edits = {}
+    state.review_opened = None
     state.reset_image_state()
 
     # What the analysis said, so an image opens with its own scale.
@@ -126,10 +146,128 @@ def load_folder(folder, min_size=DEFAULT_MIN_SIZE):
     state.results_manager = ResultsManager(csv_file=str(root / REVIEWED_CSV))
     reviewed, _unmatched = state.sync_processed_from_csv()
 
+    corrected = sum(1 for stem in stems if edited_paths(stem)[0].exists())
     done = f", {reviewed} already reviewed" if reviewed else ""
-    return (f"✅ {len(stems)} frames from {root.name}{done}. "
+    kept = f", {corrected} with corrections on disk" if corrected else ""
+    return (f"✅ {len(stems)} frames from {root.name}{done}{kept}. "
             f"Objects under {int(min_size)} px are dropped.",
             gallery_items())
+
+
+# --- the analyst's own masks ------------------------------------------------
+
+def current_stem():
+    """The name of the frame on screen, without its extension, or None."""
+    if not state.image_paths or not 0 <= state.current_index < len(state.image_paths):
+        return None
+    return Path(state.image_paths[state.current_index]).stem
+
+
+def _edits():
+    """The corrected masks held for this folder, keyed by frame."""
+    if getattr(state, "review_edits", None) is None:
+        state.review_edits = {}
+    return state.review_edits
+
+
+def edited_paths(stem):
+    """Where this frame's corrected mask and overlay go, existing or not."""
+    root = Path(getattr(state, "review_root", None) or ".")
+    return (root / EDITED_MASKS / f"{stem}.png",
+            root / EDITED_OVERLAYS / f"{stem}.png")
+
+
+def remember_edit():
+    """
+    Keep the mask as the analyst left it, so moving on does not discard it.
+
+    Held in memory and written beside the folder's own masks. The disk copy is
+    what makes the work survive the app closing, which on a folder of a hundred
+    frames is not a remote possibility.
+
+    Writes nothing when the frame was not changed during the visit: a folder
+    walked through without an edit should not fill with copies of masks that
+    are already on disk.
+    """
+    stem = current_stem()
+    if not stem or state.analyzer is None or state.analyzer.mask is None:
+        return
+    opened = getattr(state, "review_opened", None)
+    mask = state.analyzer.mask
+    if opened is not None and opened[0] == stem and np.array_equal(opened[1], mask):
+        return
+
+    mask = mask.copy()
+    _edits()[stem] = mask
+    state.review_opened = (stem, mask)
+    mask_path, overlay_path = edited_paths(stem)
+    try:
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray((mask * 255).astype(np.uint8)).save(mask_path)
+        overlay = draw_overlay(mask)
+        if overlay is not None:
+            overlay_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(overlay).save(overlay_path)
+    except OSError:
+        # The copy in memory still holds — the folder may simply be read-only.
+        pass
+
+
+def forget_edit(stem):
+    """Drop the corrected mask, so the analysis's own comes back."""
+    _edits().pop(stem, None)
+    if getattr(state, "review_opened", None) is not None \
+            and state.review_opened[0] == stem:
+        state.review_opened = None
+    for path in edited_paths(stem):
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def mask_for(stem):
+    """
+    The mask to open a frame with, and where it came from.
+
+    The analyst's own if there is one. An edit made and then navigated away
+    from is still their answer, and re-opening the batch's version silently
+    threw it away.
+
+    Returns:
+        tuple: (mask, note) — note names the source, for the frame's info line.
+    """
+    edit = _edits().get(stem)
+    if edit is not None:
+        return edit, "after your corrections"
+    saved, _overlay = edited_paths(stem)
+    if saved.exists():
+        mask = np.array(Image.open(saved).convert("L")) > 127
+        _edits()[stem] = mask
+        return mask, "after your corrections"
+    batch = np.array(Image.open(state.review_masks / f"{stem}.png").convert("L"))
+    return batch > 127, "from the analysis"
+
+
+def draw_overlay(mask):
+    """
+    The frame with the mask over it, drawn the way the batch draws it.
+
+    Red fill, yellow outline, so a corrected overlay and an automatic one can
+    sit in the same contact sheet without one looking like a different kind of
+    result.
+    """
+    if state.cropped_image is None:
+        return None
+    from skimage import morphology, segmentation as skseg
+
+    picture = state.cropped_image.astype(np.float32).copy()
+    picture[mask] = 0.55 * picture[mask] + 0.45 * np.array([255.0, 45.0, 70.0])
+    edge = morphology.dilation(skseg.find_boundaries(mask, mode="outer"),
+                               morphology.disk(1))
+    picture[edge] = np.array([255.0, 210.0, 0.0])
+    return picture.astype(np.uint8)
 
 
 def gallery_items():
@@ -140,12 +278,19 @@ def gallery_items():
     items = []
     for index, path in enumerate(state.image_paths):
         stem = Path(path).stem
-        picture = overlays / f"{stem}.png"
-        source = picture if picture.exists() else Path(path)
-        try:
-            thumbnail = Image.open(source).convert("RGB")
-            thumbnail.thumbnail((320, 320), Image.LANCZOS)
-        except Exception:
+        # The corrected overlay first: a thumbnail showing the batch's guess
+        # for a frame that has been fixed is the same lie as opening it.
+        _mask, corrected = edited_paths(stem)
+        for source in (corrected, overlays / f"{stem}.png", Path(path)):
+            if not source.exists():
+                continue
+            try:
+                thumbnail = Image.open(source).convert("RGB")
+                thumbnail.thumbnail((320, 320), Image.LANCZOS)
+                break
+            except Exception:
+                continue
+        else:
             continue
         if state.is_processed(index):
             count = state.processed_images[index].get("num_particles", "?")
@@ -155,17 +300,69 @@ def gallery_items():
     return items
 
 
-def open_index(index):
+# --- the controls that belong to one frame ----------------------------------
+
+def fresh_controls():
     """
-    Put the frame at ``index`` and its saved mask on screen.
+    The per-frame controls, put back to how a frame opens.
+
+    Everything here belongs to one frame. reset_image_state already puts the
+    app's own copy back to Remove, with no points and nothing measured — but
+    the widgets went on showing the frame before, so the rail could say Redraw
+    while a click meant Remove, and the scale panel could show a bar crop from
+    a frame that was no longer open. The state was right and the screen was
+    wrong, which is the worse way round.
 
     Returns:
-        tuple: (visualisation, header, info, measurements, scale summary)
+        tuple: (tool, redraw controls, point type, status, bar picture, scale
+        status, printed length)
+    """
+    set_point_type("positive")
+    message, redraw_controls = set_click_mode("delete")
+    return ("delete", redraw_controls, "positive", message, None, "", None)
+
+
+def keep_controls():
+    """Leave the controls alone — the frame did not change."""
+    return (gr.update(),) * 7
+
+
+def min_size_control():
+    """
+    The Review tab's slider, showing the floor the folder was opened with.
+
+    Two controls set one number: the box on the Open tab and this slider. The
+    slider kept its own default, so opening a folder at 500 px left it reading
+    200 — and the first nudge of it silently re-filtered every later frame at
+    the wrong floor.
+    """
+    return gr.update(value=int(state.min_particle_size))
+
+
+# --- moving between frames --------------------------------------------------
+
+def open_index(index, remember=True):
+    """
+    Put the frame at ``index`` and its mask on screen.
+
+    Args:
+        index (int): Which frame.
+        remember (bool): Keep the outgoing frame's corrections. False only for
+            a deliberate reload, which exists to throw them away.
+
+    Returns:
+        tuple: (visualisation, header, info, measurements, scale summary, this
+        frame's particles, this frame's summary). The visualisation is None
+        when there is no such frame, and nothing on screen changes.
     """
     from . import scale as scale_panel
 
+    if remember:
+        remember_edit()
+
     if not state.image_paths or not 0 <= index < len(state.image_paths):
-        return None, frame_header(), "No more frames", None, scale_panel.summary()
+        return (None, frame_header(), "No more frames", None,
+                scale_panel.summary(), None, None)
 
     state.current_index = index
     state.reset_image_state()
@@ -182,7 +379,7 @@ def open_index(index):
         state.scale_calibration = calibration
         state.scale_info = calibration.to_dict()
 
-    mask = np.array(Image.open(state.review_masks / f"{stem}.png").convert("L")) > 127
+    mask, note = mask_for(stem)
     analyzer = ParticleAnalyzer(conversion_factor=nm_per_px,
                                 min_size=state.min_particle_size)
     # remove_border=False: the batch already decided what to do at the frame
@@ -190,26 +387,34 @@ def open_index(index):
     analyzer.analyze_mask(mask, min_size=state.min_particle_size,
                           remove_border=False)
     state.analyzer = analyzer
+    # What the frame looked like on arrival, so leaving it can tell whether
+    # anything was actually done to it.
+    state.review_opened = (stem, analyzer.mask.copy())
 
     measurements = analyzer.get_measurements(in_nm=nm_per_px is not None)
     info = (f"{stem} — {index + 1} of {len(state.image_paths)}, "
-            f"{measurements['num_particles']} from the analysis")
+            f"{measurements['num_particles']} particles {note}")
     # A frame opens with the mask editable and the scale panel showing what it
     # will be measured with, which is the thing most easily taken on trust.
     state.scale_click_mode = False
     state.scale_points = []
+    table = create_results_dataframe(measurements)
     return (create_particle_visualization(state.cropped_image,
                                           analyzer.labeled_mask, analyzer.regions,
                                           show_labels=state.show_particle_numbers),
-            frame_header(), info, create_results_dataframe(measurements),
-            scale_panel.summary())
+            frame_header(), info, table, scale_panel.summary(),
+            table, create_summary_statistics_table(measurements))
+
+
+def _stayed(frame, info):
+    """There was no frame to move to: change the words, not the picture."""
+    return (gr.update(), frame[1], info, gr.update(), frame[4],
+            gr.update(), gr.update())
 
 
 def select_from_gallery(evt: gr.SelectData):
     """Open the clicked frame, and go to the tab that edits it."""
-    viz, header, info, table, scale_summary = open_index(evt.index)
-    return (viz, header, info, table, scale_summary, gr.Tabs(selected=2),
-            "delete")
+    return open_index(evt.index) + fresh_controls() + (gr.Tabs(selected=2),)
 
 
 def save_and_next():
@@ -217,42 +422,48 @@ def save_and_next():
     Record this frame as reviewed, then open the next one.
 
     Returns:
-        tuple: (status, gallery, viz, header, info, measurements)
+        tuple: (status, gallery) followed by the frame outputs.
     """
     from sem_analysis_app.callbacks.results import save_current_results
 
+    remember_edit()
     status, _gallery = save_current_results(recorded_name())
     if not status.startswith("✅"):
-        return (status,) + (gr.update(),) * 6
+        return (status,) + (gr.update(),) * 15
 
-    viz, header, info, table, scale_summary = open_index(state.current_index + 1)
-    if viz is None:
-        return (f"{status} — that was the last frame.", gallery_items(),
-                gr.update(), header, info, gr.update(), scale_summary)
-    return status, gallery_items(), viz, header, info, table, scale_summary
+    frame = open_index(state.current_index + 1)
+    if frame[0] is None:
+        return ((f"{status} — that was the last frame.", gallery_items())
+                + _stayed(frame, "No more frames") + keep_controls())
+    return (status, gallery_items()) + frame + fresh_controls()
 
 
 def skip_to_next():
     """Move on without recording anything."""
-    viz, header, info, table, scale_summary = open_index(state.current_index + 1)
-    if viz is None:
-        return gr.update(), header, "No more frames", gr.update(), scale_summary
-    return viz, header, info, table, scale_summary
+    frame = open_index(state.current_index + 1)
+    if frame[0] is None:
+        return _stayed(frame, "No more frames") + keep_controls()
+    return frame + fresh_controls()
 
 
 def go_back():
     """Open the previous frame."""
-    viz, header, info, table, scale_summary = open_index(state.current_index - 1)
-    if viz is None:
-        return (gr.update(), header, "Already at the first frame", gr.update(),
-                scale_summary)
-    return viz, header, info, table, scale_summary
+    frame = open_index(state.current_index - 1)
+    if frame[0] is None:
+        return _stayed(frame, "Already at the first frame") + keep_controls()
+    return frame + fresh_controls()
 
 
 def reload_frame():
-    """Throw away every edit and put the analysis's own mask back."""
-    viz, header, info, table, scale_summary = open_index(state.current_index)
-    return viz, header, f"Reloaded — {info}", table, scale_summary
+    """Throw away every correction and put the analysis's own mask back."""
+    stem = current_stem()
+    if stem:
+        forget_edit(stem)
+    frame = open_index(state.current_index, remember=False)
+    if frame[0] is None:
+        return _stayed(frame, "Nothing open") + keep_controls()
+    return ((frame[0], frame[1], f"Reloaded — {frame[2]}") + frame[3:]
+            + fresh_controls())
 
 
 def current_overlay_path():
@@ -277,6 +488,24 @@ def current_header():
     return frame_header()
 
 
+def current_tables():
+    """
+    This frame's particles and summary, as the Results tab shows them.
+
+    Chained onto the edits that do not carry those two outputs themselves —
+    Undo, and a scale measured by hand, which changes every size on the frame.
+    Without it the Results tab kept showing figures the frame no longer had.
+
+    Returns:
+        tuple: (particles, summary)
+    """
+    if state.analyzer is None:
+        return None, None
+    measurements = state.analyzer.get_measurements(in_nm=True)
+    return (create_results_dataframe(measurements),
+            create_summary_statistics_table(measurements))
+
+
 def save_here():
     """
     Record this frame as reviewed and stay on it.
@@ -286,6 +515,7 @@ def save_here():
     """
     from sem_analysis_app.callbacks.results import save_current_results
 
+    remember_edit()
     status, _gallery = save_current_results(recorded_name())
     return status, gallery_items()
 

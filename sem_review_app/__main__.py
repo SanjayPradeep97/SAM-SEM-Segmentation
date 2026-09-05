@@ -3,12 +3,31 @@ Launch the review app:  python -m sem_review_app
 """
 
 import argparse
+import sys
 
 # How many ports to try before giving up.
 PORT_TRIES = 10
 
 
+def _printable_console():
+    """
+    Let the console take the characters the status lines are written in.
+
+    A Windows console still defaults to cp1252, which has no ✅ — so opening a
+    folder from the command line killed the app before it ever served a page,
+    with a UnicodeEncodeError in place of the interface. Nothing about a tick
+    in a status line is worth failing over, so anything the console cannot
+    render is replaced rather than raised.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv=None):
+    _printable_console()
     parser = argparse.ArgumentParser(
         prog="sem_review_app",
         description="Review and finalise a pre-analysed folder")

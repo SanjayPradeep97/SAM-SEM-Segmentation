@@ -245,22 +245,31 @@ def create_interface():
                                           show_label=False)
 
         # ----------------------------------------------------------- wiring
-        REVIEW_OUTPUTS = [review_viz, header, frame_info, frame_results,
-                          scale_summary]
+        # Everything a change of frame writes. The tail of it is the controls
+        # that belong to one frame: without them on the list the rail and the
+        # scale panel went on showing the frame before, so the tool the screen
+        # named was not the tool a click used.
+        FRAME_OUTPUTS = [review_viz, header, frame_info, frame_results,
+                         scale_summary, current_results, current_stats,
+                         click_mode_radio, point_controls, point_type_radio,
+                         review_status, scale_check_img, scale_status,
+                         bar_value]
 
         # A folder opened by --folder, or before a refresh, is still open in the
         # process; the gallery is per-connection and would come up empty.
         app.load(loading.restore,
-                 outputs=[load_status, gallery, folder_input])
+                 outputs=[load_status, gallery, folder_input]).then(
+            loading.min_size_control, outputs=[min_size_slider])
 
         load_btn.click(loading.load_folder,
                        inputs=[folder_input, min_size_input],
-                       outputs=[load_status, gallery])
+                       outputs=[load_status, gallery]).then(
+            loading.min_size_control, outputs=[min_size_slider])
         init_sam_btn.click(initialize_sam, inputs=[sam_file],
                            outputs=[init_status, load_btn])
 
         gallery.select(loading.select_from_gallery,
-                       outputs=REVIEW_OUTPUTS + [tabs, click_mode_radio])
+                       outputs=FRAME_OUTPUTS + [tabs])
 
         click_mode_radio.change(set_click_mode, inputs=[click_mode_radio],
                                 outputs=[review_status, point_controls])
@@ -283,7 +292,8 @@ def create_interface():
         apply_points_btn.click(
             scale.apply_points, inputs=[bar_value, bar_unit],
             outputs=[review_viz, scale_status, scale_summary, header,
-                     frame_results])
+                     frame_results]).then(
+            loading.current_tables, outputs=[current_results, current_stats])
 
         apply_btn.click(apply_refinement_changes,
                         outputs=[review_viz, frame_results, review_status,
@@ -291,10 +301,11 @@ def create_interface():
             loading.current_header, outputs=[header])
         undo_btn.click(undo_last_action,
                        outputs=[review_viz, frame_results, review_status]).then(
-            loading.current_header, outputs=[header])
+            loading.current_header, outputs=[header]).then(
+            loading.current_tables, outputs=[current_results, current_stats])
         discard_btn.click(clear_pending_changes,
                           outputs=[review_viz, review_status])
-        reload_btn.click(loading.reload_frame, outputs=REVIEW_OUTPUTS)
+        reload_btn.click(loading.reload_frame, outputs=FRAME_OUTPUTS)
 
         clear_edges_btn.click(clear_edge_particles, inputs=[edge_buffer],
                               outputs=[review_viz, frame_results, review_status,
@@ -309,13 +320,11 @@ def create_interface():
         show_numbers.change(toggle_particle_numbers, inputs=[show_numbers],
                             outputs=[review_viz])
 
-        back_btn.click(loading.go_back, outputs=REVIEW_OUTPUTS)
-        skip_btn.click(loading.skip_to_next, outputs=REVIEW_OUTPUTS)
+        back_btn.click(loading.go_back, outputs=FRAME_OUTPUTS)
+        skip_btn.click(loading.skip_to_next, outputs=FRAME_OUTPUTS)
         save_btn.click(loading.save_here, outputs=[save_status, gallery])
-        save_next_btn.click(
-            loading.save_and_next,
-            outputs=[save_status, gallery, review_viz, header, frame_info,
-                     frame_results, scale_summary])
+        save_next_btn.click(loading.save_and_next,
+                            outputs=[save_status, gallery] + FRAME_OUTPUTS)
 
         refresh_btn.click(get_session_summary,
                           outputs=[session_table, summary_progress,

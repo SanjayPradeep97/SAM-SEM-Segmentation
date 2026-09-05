@@ -164,14 +164,12 @@ class TestMovingThroughTheFolder:
 
     def test_it_stops_at_the_ends(self, opened):
         state, loading, _root, _frames = opened
-        _viz, _header, info, _table, _scale = loading.go_back()
-        assert "first frame" in info
+        assert "first frame" in loading.go_back()[2]
         assert state.current_index == 0
 
         state.current_index = 2
         loading.open_index(2)
-        _viz, _header, info, _table, _scale = loading.skip_to_next()
-        assert "No more frames" in info
+        assert "No more frames" in loading.skip_to_next()[2]
 
     def test_saving_records_a_row_and_ticks_the_frame(self, opened):
         state, loading, root, _frames = opened
@@ -186,9 +184,24 @@ class TestMovingThroughTheFolder:
 
     def test_save_and_next_moves_on(self, opened):
         state, loading, _root, _frames = opened
-        status, _gallery, _viz, _header, info, _table, _scale = loading.save_and_next()
-        assert status.startswith("✅")
+        outputs = loading.save_and_next()
+        assert outputs[0].startswith("✅")
         assert state.current_index == 1
+
+    def test_saving_the_same_frame_twice_leaves_one_row(self, opened):
+        # Going back to a frame to correct it is ordinary work. It used to
+        # leave two rows behind, and every total drawn from the file counted
+        # that frame twice.
+        state, loading, root, _frames = opened
+        loading.save_here()
+        state.analyzer.delete_particles([state.analyzer.regions[0].label])
+        status, _gallery = loading.save_here()
+        assert status.startswith("✅")
+
+        reviewed = ResultsManager(csv_file=str(root / loading.REVIEWED_CSV),
+                                  auto_create=False).get_results()
+        assert list(reviewed["file_name"]) == ["X1_0001.png"]
+        assert list(reviewed["num_particles"]) == [2], "the corrected count"
 
     def test_reload_throws_away_the_edits(self, opened):
         state, loading, _root, _frames = opened
@@ -196,9 +209,10 @@ class TestMovingThroughTheFolder:
         state.analyzer.delete_particles([state.analyzer.regions[0].label])
         assert len(state.analyzer.regions) == before - 1
 
-        _viz, _header, info, _table, _scale = loading.reload_frame()
+        outputs = loading.reload_frame()
         assert len(state.analyzer.regions) == before
-        assert "Reloaded" in info
+        assert "Reloaded" in outputs[2]
+        assert "from the analysis" in outputs[2]
 
 
 class TestEveryControl:
@@ -363,11 +377,14 @@ class TestEveryControl:
         assert outputs[0] is not None
 
     def test_removing_duplicates(self, opened):
+        # Saving twice no longer makes a duplicate, so one is made the way an
+        # older results file would already hold one: by appending.
         from sem_analysis_app.callbacks import check_and_remove_duplicates
 
-        _state, loading, _root, _frames = opened
+        state, loading, _root, _frames = opened
         loading.save_here()
-        loading.save_here()
+        state.results_manager.add_result(
+            "X1_0001.png", state.analyzer.get_measurements(in_nm=True))
         table, status = check_and_remove_duplicates()
         assert "Removed 1" in status
 
@@ -403,8 +420,10 @@ class TestEveryControl:
         _state, loading, _root, _frames = opened
         loading.save_here()
         loading.save_and_next()
+        loading.save_here()
         path, _status = export_results()
-        assert list(pd.read_csv(path)["file_name"]) == ["X1_0001.png", "X1_0001.png"]
+        assert list(pd.read_csv(path)["file_name"]) == ["X1_0001.png",
+                                                        "X1_0002.png"]
 
     def test_exporting_nothing_says_so(self, opened):
         from sem_analysis_app.callbacks import export_results
@@ -798,3 +817,243 @@ class TestReviewedFramesComeBackTicked:
         loading.save_here()
         _status, gallery, _folder = loading.restore()
         assert "(2)" in gallery[0][1]
+
+
+class TestCorrectionsBelongToTheFrame:
+    """
+    An edit made on a frame is that frame's answer from then on.
+
+    Every mask was re-read from the batch's own folder on the way in, so
+    correcting a frame, moving on and coming back showed the automatic guess
+    again — the work was still in the results CSV, but the mask on screen no
+    longer matched it, and the obvious thing to do was redo it.
+    """
+
+    def corrected(self, state, loading):
+        """Delete one particle from the open frame, and say how many are left."""
+        state.analyzer.delete_particles([state.analyzer.regions[0].label])
+        return len(state.analyzer.regions)
+
+    def test_leaving_and_coming_back_keeps_the_edit(self, opened):
+        state, loading, _root, _frames = opened
+        left = self.corrected(state, loading)
+
+        loading.skip_to_next()
+        loading.go_back()
+        assert len(state.analyzer.regions) == left
+
+    def test_the_frame_says_the_mask_is_yours(self, opened):
+        state, loading, _root, _frames = opened
+        self.corrected(state, loading)
+        loading.skip_to_next()
+        assert "your corrections" in loading.go_back()[2]
+
+    def test_an_untouched_frame_still_says_it_is_the_analysis(self, opened):
+        _state, loading, _root, _frames = opened
+        assert "from the analysis" in loading.skip_to_next()[2]
+
+    def test_the_correction_is_written_beside_the_batch_mask(self, opened):
+        state, loading, root, _frames = opened
+        self.corrected(state, loading)
+        loading.skip_to_next()
+
+        saved = root / loading.EDITED_MASKS / "X1_0001.png"
+        assert saved.exists(), "nothing on disk to survive the app closing"
+        assert (root / "mask" / "X1_0001.png").exists(), "batch mask overwritten"
+        assert (root / loading.EDITED_OVERLAYS / "X1_0001.png").exists()
+
+    def test_a_frame_nobody_touched_writes_nothing(self, opened):
+        _state, loading, root, _frames = opened
+        loading.skip_to_next()
+        loading.go_back()
+        assert not (root / loading.EDITED_MASKS).exists()
+
+    def test_it_survives_reopening_the_folder(self, opened):
+        state, loading, root, _frames = opened
+        left = self.corrected(state, loading)
+        loading.save_here()
+
+        # As if the app had been restarted: nothing in memory, only the folder.
+        state.review_edits = {}
+        loading.load_folder(str(root), min_size=30)
+        loading.open_index(0)
+        assert len(state.analyzer.regions) == left
+
+    def test_reopening_says_how_many_are_corrected(self, opened):
+        state, loading, root, _frames = opened
+        self.corrected(state, loading)
+        loading.skip_to_next()
+        status, _gallery = loading.load_folder(str(root), min_size=30)
+        assert "1 with corrections on disk" in status
+
+    def test_reload_from_the_analysis_removes_the_saved_copy(self, opened):
+        state, loading, root, _frames = opened
+        before = len(state.analyzer.regions)
+        self.corrected(state, loading)
+        loading.skip_to_next()
+        loading.go_back()
+
+        loading.reload_frame()
+        assert len(state.analyzer.regions) == before
+        assert not (root / loading.EDITED_MASKS / "X1_0001.png").exists()
+        # And it stays gone after leaving the frame again.
+        loading.skip_to_next()
+        loading.go_back()
+        assert len(state.analyzer.regions) == before
+
+    def test_the_gallery_shows_the_corrected_overlay(self, opened):
+        state, loading, root, _frames = opened
+        self.corrected(state, loading)
+        loading.skip_to_next()
+
+        corrected = root / loading.EDITED_OVERLAYS / "X1_0001.png"
+        thumbnail = loading.gallery_items()[0][0]
+        expected = Image.open(corrected).convert("RGB")
+        expected.thumbnail((320, 320), Image.LANCZOS)
+        assert np.array_equal(np.array(thumbnail), np.array(expected))
+
+    def test_a_folder_that_cannot_be_written_to_still_holds_the_edit(self, opened):
+        # A read-only folder must not lose the correction, or take the click
+        # down with it.
+        state, loading, _root, _frames = opened
+        left = self.corrected(state, loading)
+
+        def refuse(*_args, **_kwargs):
+            raise OSError("read-only")
+
+        original = Image.Image.save
+        Image.Image.save = refuse
+        try:
+            loading.skip_to_next()
+        finally:
+            Image.Image.save = original
+        loading.go_back()
+        assert len(state.analyzer.regions) == left
+
+
+class TestTheControlsFollowTheFrame:
+    """
+    What the rail says and what a click does have to be the same thing.
+
+    reset_image_state puts the app back to Remove on every new frame, but the
+    widgets were not on the outputs of Save & next, Skip or Previous — so the
+    rail could go on showing Redraw, with its point controls open, while a
+    click on the image deleted a particle.
+    """
+
+    def moved(self, outputs):
+        """The seven per-frame controls at the tail of a frame change."""
+        return outputs[-7:]
+
+    @pytest.mark.parametrize("move", ["save_and_next", "skip_to_next", "go_back",
+                                      "reload_frame"])
+    def test_every_move_puts_the_tool_back_to_remove(self, opened, move):
+        state, loading, _root, _frames = opened
+        if move == "go_back":
+            loading.skip_to_next()
+        from sem_analysis_app.callbacks import set_click_mode
+
+        set_click_mode("point_refine")
+        state.point_type = "negative"
+
+        outputs = getattr(loading, move)()
+        tool, redraw, point_type, status, bar, scale_status, length = \
+            self.moved(outputs)
+        assert tool == "delete", "the rail still names the previous tool"
+        assert redraw.get("visible") is False, "redraw controls left open"
+        assert point_type == "positive"
+        assert state.click_mode == "delete" and state.point_type == "positive"
+        assert isinstance(status, str)
+        assert bar is None and scale_status == "" and length is None
+
+    def test_the_gallery_does_the_same(self, opened):
+        from sem_analysis_app.callbacks import set_click_mode
+
+        _state, loading, _root, _frames = opened
+        set_click_mode("merge")
+
+        class Event:
+            index = 2
+
+        outputs = loading.select_from_gallery(Event())
+        assert outputs[-8] == "delete", "tool, before the tab selection"
+
+    def test_a_move_that_did_not_happen_leaves_the_rail_alone(self, opened):
+        # Skip at the last frame does not change frames, and reset_image_state
+        # never runs — so putting the widgets back to Remove here would create
+        # the mismatch this is meant to prevent, the other way round.
+        state, loading, _root, _frames = opened
+        from sem_analysis_app.callbacks import set_click_mode
+
+        loading.open_index(2)
+        set_click_mode("merge")
+        for control in self.moved(loading.skip_to_next()):
+            assert set(control) == {"__type__"}, "expected gr.update() and no value"
+        assert state.click_mode == "merge"
+
+    def test_the_scale_panel_does_not_carry_over(self, opened):
+        # The bar crop and the printed length belong to one frame. Left on
+        # screen they invite confirming a scale by looking at another frame's
+        # bar, which is the one mistake the panel exists to prevent.
+        _state, loading, _root, _frames = opened
+        _tool, _redraw, _point, _status, bar, scale_status, length = \
+            self.moved(loading.skip_to_next())
+        assert bar is None
+        assert scale_status == ""
+        assert length is None
+
+    def test_the_minimum_size_slider_shows_the_folder_it_opened(self, opened):
+        # Two controls set one number. The slider kept its own default, so a
+        # folder opened at 500 px left it reading 200 — and the first nudge of
+        # it re-filtered every later frame at the wrong floor.
+        state, loading, root, _frames = opened
+        loading.load_folder(str(root), min_size=500)
+        assert loading.min_size_control().get("value") == 500
+        assert state.min_particle_size == 500
+
+
+class TestTheWiringMatchesTheCallbacks:
+    """
+    Every handler must return exactly as many values as it has outputs.
+
+    Gradio does not check this. A callback returning too few values leaves the
+    rest of its components untouched, and one returning too many is an error
+    only in the server log — either way the interface quietly does the wrong
+    thing on a click nobody thought to test.
+    """
+
+    def test_the_navigation_callbacks_fill_their_outputs(self, opened):
+        from sem_review_app.ui import create_interface
+
+        _state, loading, _root, _frames = opened
+        checked = set()
+        for function in create_interface().fns.values():
+            name = getattr(function.fn, "__name__", "")
+            if name not in ("save_and_next", "skip_to_next", "go_back",
+                            "reload_frame"):
+                continue
+            loading.open_index(0)
+            assert len(getattr(loading, name)()) == len(function.outputs), name
+            checked.add(name)
+        assert checked == {"save_and_next", "skip_to_next", "go_back",
+                           "reload_frame"}
+
+    def test_opening_a_frame_fills_the_results_tab_too(self, opened):
+        # The Results tab's "this frame" tables were not among the outputs of a
+        # frame change, so they went on showing the frame before.
+        import pandas as pd
+
+        _state, loading, _root, _frames = opened
+        outputs = loading.open_index(1)
+        assert len(outputs) == 7
+        assert isinstance(outputs[5], pd.DataFrame), "this frame's particles"
+        assert isinstance(outputs[6], pd.DataFrame), "this frame's summary"
+        assert len(outputs[5]) == 1, "frame two has one particle"
+
+    def test_the_tables_a_scale_change_leaves_behind(self, opened):
+        import pandas as pd
+
+        _state, loading, _root, _frames = opened
+        particles, stats = loading.current_tables()
+        assert isinstance(particles, pd.DataFrame)
+        assert isinstance(stats, pd.DataFrame)
