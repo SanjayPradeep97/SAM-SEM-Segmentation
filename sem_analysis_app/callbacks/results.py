@@ -24,6 +24,12 @@ def save_current_results(file_name=None):
             analysis used, so a reviewed row and an automatic one refer to the
             same frame by the same name — it works from PNG copies of TIFFs, and
             without this the two files could not be lined up at all.
+
+    Saving a frame that has already been saved replaces its row. Going back to
+    a frame to correct it is normal work, and it used to leave two rows behind:
+    the same frame counted twice in every total drawn from the file, with only
+    the Remove duplicates button — which nothing prompts anyone to press — to
+    catch it.
     """
     try:
         if state.analyzer is None:
@@ -46,7 +52,8 @@ def save_current_results(file_name=None):
         filename = file_name or os.path.basename(
             state.image_paths[state.current_index])
         state.results_manager.add_result(filename, measurements,
-                                         scale_method=scale_method)
+                                         scale_method=scale_method,
+                                         replace=True)
 
         # Mark as processed
         state.mark_processed(state.current_index, measurements['num_particles'])
