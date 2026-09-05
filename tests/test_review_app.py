@@ -519,6 +519,75 @@ class TestReconnecting:
         assert loading.restore() == ("", [], "")
 
 
+class TestTheReviewTabIsNeverEmptyOverAnOpenFolder:
+    """
+    A browser that connects to an open folder must land on a frame.
+
+    The Review tab is per-connection: after a restart, a refresh, or opening a
+    folder, it said "Nothing open" over a folder that was open with half its
+    frames done. The only way through was to go to Frames and click a
+    thumbnail, which nothing on the tab said to do.
+    """
+
+    def test_connecting_opens_the_first_frame_still_to_review(self, opened):
+        state, loading, _root, _frames = opened
+        loading.open_index(0)
+        loading.save_here()          # frame one is done
+        state.reset_image_state()    # as if the process had just started
+
+        outputs = loading.resume_view()
+        assert state.current_index == 1, "should resume where the work stopped"
+        assert outputs[0] is not None, "the Review tab came up blank"
+        assert "2 of 3" in outputs[2]
+
+    def test_a_folder_with_nothing_reviewed_opens_the_first_frame(self, opened):
+        state, loading, _root, _frames = opened
+        state.reset_image_state()
+        loading.resume_view()
+        assert state.current_index == 0
+
+    def test_a_refresh_does_not_disturb_the_open_frame(self, opened):
+        # Redrawing must not re-open: clicks queued but not yet applied are
+        # part of what the analyst has done, and reloading the frame would
+        # throw them away on every page refresh.
+        state, loading, _root, _frames = opened
+        state.click_mode = "delete"
+        label = state.analyzer.regions[0].label
+        state.pending_deletes = [label]
+        before = state.analyzer.mask.copy()
+
+        outputs = loading.resume_view()
+        assert state.pending_deletes == [label], "pending clicks discarded"
+        assert np.array_equal(state.analyzer.mask, before)
+        assert outputs[0] is not None
+
+    def test_it_sends_the_tool_the_app_is_actually_on(self, opened):
+        # A fresh page comes up with the interface's defaults, which need not
+        # be what was chosen before the refresh.
+        from sem_analysis_app.callbacks import set_click_mode
+
+        _state, loading, _root, _frames = opened
+        set_click_mode("merge")
+        outputs = loading.resume_view()
+        assert outputs[-7] == "merge"
+        assert outputs[-6].get("visible") is False
+
+        set_click_mode("point_refine")
+        outputs = loading.resume_view()
+        assert outputs[-7] == "point_refine"
+        assert outputs[-6].get("visible") is True
+
+    def test_no_folder_at_all_says_so_rather_than_raising(self):
+        from sem_analysis_app.state import state
+        from sem_review_app import loading
+
+        state.image_paths = []
+        state.analyzer = None
+        outputs = loading.resume_view()
+        assert outputs[0] is None
+        assert "No folder open" in outputs[2]
+
+
 class TestTheLauncher:
     """
     A busy port is ordinary, not an error worth a stack trace.
@@ -1030,13 +1099,13 @@ class TestTheWiringMatchesTheCallbacks:
         for function in create_interface().fns.values():
             name = getattr(function.fn, "__name__", "")
             if name not in ("save_and_next", "skip_to_next", "go_back",
-                            "reload_frame"):
+                            "reload_frame", "resume_view"):
                 continue
             loading.open_index(0)
             assert len(getattr(loading, name)()) == len(function.outputs), name
             checked.add(name)
         assert checked == {"save_and_next", "skip_to_next", "go_back",
-                           "reload_frame"}
+                           "reload_frame", "resume_view"}
 
     def test_opening_a_frame_fills_the_results_tab_too(self, opened):
         # The Results tab's "this frame" tables were not among the outputs of a
