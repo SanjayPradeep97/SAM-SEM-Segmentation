@@ -327,6 +327,21 @@ def keep_controls():
     return (gr.update(),) * 7
 
 
+def controls_now():
+    """
+    The controls as the app's own state has them.
+
+    For a browser that has just connected: the widgets come up at the defaults
+    written into the interface, which need not be what the analyst had chosen
+    before the page was refreshed. This sends them the truth rather than a
+    reset, so a refresh does not silently change the tool under the cursor.
+    """
+    mode = getattr(state, "click_mode", "delete") or "delete"
+    return (mode, gr.update(visible=mode == "point_refine"),
+            getattr(state, "point_type", "positive") or "positive",
+            "", None, "", None)
+
+
 def min_size_control():
     """
     The Review tab's slider, showing the floor the folder was opened with.
@@ -390,6 +405,9 @@ def open_index(index, remember=True):
     # What the frame looked like on arrival, so leaving it can tell whether
     # anything was actually done to it.
     state.review_opened = (stem, analyzer.mask.copy())
+    # Where this frame's mask came from, for the info line — kept so that
+    # redrawing the frame later can say the same thing.
+    state.review_note = note
 
     measurements = analyzer.get_measurements(in_nm=nm_per_px is not None)
     info = (f"{stem} — {index + 1} of {len(state.image_paths)}, "
@@ -410,6 +428,66 @@ def _stayed(frame, info):
     """There was no frame to move to: change the words, not the picture."""
     return (gr.update(), frame[1], info, gr.update(), frame[4],
             gr.update(), gr.update())
+
+
+def first_unreviewed():
+    """Where to resume a folder: the first frame with no reviewed row."""
+    for index in range(len(state.image_paths)):
+        if not state.is_processed(index):
+            return index
+    return 0
+
+
+def current_view():
+    """
+    Draw the frame that is already open, without disturbing it.
+
+    Unlike open_index this resets nothing and re-reads nothing: clicks queued
+    but not yet applied are still queued, and are drawn as such. That is what
+    makes it safe to call every time a browser connects.
+
+    Returns:
+        tuple: the same seven values open_index returns.
+    """
+    from . import scale as scale_panel
+
+    stem = current_stem()
+    measurements = state.analyzer.get_measurements(in_nm=True)
+    table = create_results_dataframe(measurements)
+    info = (f"{stem} — {state.current_index + 1} of {len(state.image_paths)}, "
+            f"{measurements['num_particles']} particles "
+            f"{getattr(state, 'review_note', '') or 'as you left them'}")
+    return (get_current_visualization(), frame_header(), info, table,
+            scale_panel.summary(), table,
+            create_summary_statistics_table(measurements))
+
+
+def resume_view():
+    """
+    Put a frame on the Review tab, for a browser that has just connected.
+
+    The Review tab is per-connection and came up saying "Nothing open" every
+    time the page was loaded — after a restart, after a refresh, after opening
+    a folder — even with the folder open and half of it already reviewed. The
+    only way through was to go to Frames and click a thumbnail, which is not
+    something the tab said to do in any way an analyst mid-folder would read as
+    "your work is still here".
+
+    A frame the app already has open is redrawn as it stands. Otherwise the
+    first frame still to be reviewed is opened, which is where somebody
+    resuming a folder was going anyway.
+
+    Returns:
+        tuple: the frame outputs, followed by the per-frame controls.
+    """
+    from . import scale as scale_panel
+
+    if not state.image_paths:
+        return (None, frame_header(), "No folder open", None,
+                scale_panel.summary(), None, None) + controls_now()
+    if state.analyzer is None or state.cropped_image is None:
+        return open_index(first_unreviewed()) + fresh_controls()
+    return current_view() + controls_now()
 
 
 def select_from_gallery(evt: gr.SelectData):

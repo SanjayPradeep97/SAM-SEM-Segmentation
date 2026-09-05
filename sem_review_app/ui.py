@@ -82,9 +82,14 @@ def create_interface():
                 with gr.Row():
                     with gr.Column(scale=2):
                         gr.Markdown("### 1 · The analysis", elem_classes=["step-title"])
+                        # max_lines pinned, or Gradio stretches the box to the
+                        # height of the column — 412px for a one-line path, and
+                        # the Open folder button and its status pushed off the
+                        # bottom of the window.
                         folder_input = gr.Textbox(
                             label="Analysis folder",
                             placeholder=r"D:\...\C1_analysis",
+                            lines=2, max_lines=2,
                             info="The folder a run wrote: raw, mask, overlay and "
                                  "analysis_results.csv",
                         )
@@ -94,7 +99,8 @@ def create_interface():
                         )
                         load_btn = gr.Button("📂 Open folder", variant="primary",
                                              size="lg")
-                        load_status = gr.Textbox(label="Status", interactive=False)
+                        load_status = gr.Textbox(label="Status", interactive=False,
+                                                 lines=2, max_lines=3)
 
                     with gr.Column(scale=1):
                         gr.Markdown("### 2 · Model (optional)",
@@ -111,7 +117,8 @@ def create_interface():
                             allow_custom_value=True,
                         )
                         init_sam_btn = gr.Button("⚡ Load model")
-                        init_status = gr.Textbox(label="Status", interactive=False)
+                        init_status = gr.Textbox(label="Status", interactive=False,
+                                                 lines=2, max_lines=3)
 
             # -------------------------------------------------------- Gallery
             with gr.Tab("🖼️ Frames", id=1):
@@ -256,15 +263,19 @@ def create_interface():
                          bar_value]
 
         # A folder opened by --folder, or before a refresh, is still open in the
-        # process; the gallery is per-connection and would come up empty.
+        # process; every part of the interface that shows it is per-connection
+        # and would come up empty. resume_view is what stops the Review tab
+        # saying "Nothing open" over a folder that is open.
         app.load(loading.restore,
                  outputs=[load_status, gallery, folder_input]).then(
-            loading.min_size_control, outputs=[min_size_slider])
+            loading.min_size_control, outputs=[min_size_slider]).then(
+            loading.resume_view, outputs=FRAME_OUTPUTS)
 
         load_btn.click(loading.load_folder,
                        inputs=[folder_input, min_size_input],
                        outputs=[load_status, gallery]).then(
-            loading.min_size_control, outputs=[min_size_slider])
+            loading.min_size_control, outputs=[min_size_slider]).then(
+            loading.resume_view, outputs=FRAME_OUTPUTS)
         init_sam_btn.click(initialize_sam, inputs=[sam_file],
                            outputs=[init_status, load_btn])
 
