@@ -371,22 +371,24 @@ class AppState:
         if len(results_df) == 0:
             return 0, 0
 
-        # Build lookup: filename -> num_particles
-        csv_filenames = {}
+        # Matched on the name without its extension. The review app reads PNG
+        # copies of frames the analysis measured as TIFFs, so the full names
+        # never agree and not one reviewed frame came back ticked — the gallery
+        # said no work had been done at all.
+        by_stem = {}
         for _, row in results_df.iterrows():
-            csv_filenames[row['file_name']] = int(row['num_particles'])
+            stem = os.path.splitext(str(row['file_name']))[0]
+            by_stem[stem] = int(row['num_particles'])
 
-        # Match loaded images against CSV
         matched = 0
         for idx, img_path in enumerate(self.image_paths):
-            basename = os.path.basename(img_path)
-            if basename in csv_filenames:
-                self.mark_processed(idx, csv_filenames[basename])
+            stem = os.path.splitext(os.path.basename(img_path))[0]
+            if stem in by_stem:
+                self.mark_processed(idx, by_stem[stem])
                 matched += 1
 
-        # Count CSV entries with no matching uploaded image
-        image_basenames = {os.path.basename(p) for p in self.image_paths}
-        unmatched = sum(1 for fn in csv_filenames if fn not in image_basenames)
+        loaded = {os.path.splitext(os.path.basename(p))[0] for p in self.image_paths}
+        unmatched = sum(1 for stem in by_stem if stem not in loaded)
 
         return matched, unmatched
 
