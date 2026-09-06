@@ -203,6 +203,21 @@ class TestMovingThroughTheFolder:
         assert list(reviewed["file_name"]) == ["X1_0001.png"]
         assert list(reviewed["num_particles"]) == [2], "the corrected count"
 
+    def test_the_same_frame_under_two_names_is_still_one_frame(self, opened):
+        # The app records the name the analysis used; anything that saves the
+        # frame under the file it actually opened writes a PNG name for the
+        # same TIFF. Three C1 frames ended up in the results twice that way,
+        # counted twice in every total drawn from the file.
+        state, loading, root, _frames = opened
+        loading.save_here()
+        state.results_manager.add_result(
+            "X1_0001.png", state.analyzer.get_measurements(in_nm=True),
+            scale_method="box_ocr", replace=True)
+
+        reviewed = ResultsManager(csv_file=str(root / loading.REVIEWED_CSV),
+                                  auto_create=False).get_results()
+        assert list(reviewed["file_name"]) == ["X1_0001.png"]
+
     def test_reload_throws_away_the_edits(self, opened):
         state, loading, _root, _frames = opened
         before = len(state.analyzer.regions)
