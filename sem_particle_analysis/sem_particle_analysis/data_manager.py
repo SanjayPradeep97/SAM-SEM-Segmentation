@@ -204,11 +204,13 @@ class ResultsManager:
                 ``ScaleCalibration.provenance``. Pass "none" when there was no
                 scale; leaving it None records nothing, which reads as "written
                 before this was tracked" rather than as an answer.
-            replace (bool): Drop any row already recorded under this name
+            replace (bool): Drop any row already recorded for this frame
                 rather than adding a second one. Saving a frame twice means it
                 has been corrected, not that a second image was measured — and
                 two rows for one frame count its particles twice in every
-                total drawn from the file.
+                total drawn from the file. Matched on the name without its
+                extension: the review app works from PNG copies of TIFFs, and
+                one frame saved once under each name is still one frame.
 
         Returns:
             bool: True if successful
@@ -247,9 +249,13 @@ class ResultsManager:
         if not os.path.exists(self.csv_file):
             self._create_csv()
 
-        if replace and len(self.results_df) and                 (self.results_df["file_name"] == file_name).any():
-            self._rewrite(self.results_df[self.results_df["file_name"] != file_name])
-            self.results_df = self._load_data()
+        if replace and len(self.results_df):
+            stem = os.path.splitext(str(file_name))[0]
+            same = self.results_df["file_name"].map(
+                lambda n: os.path.splitext(str(n))[0] == stem)
+            if same.any():
+                self._rewrite(self.results_df[~same])
+                self.results_df = self._load_data()
 
         columns = list(self.results_df.columns) or self.columns
 
