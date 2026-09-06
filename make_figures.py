@@ -8,10 +8,18 @@ Three samples, each a filter, each imaged on two instruments:
 
     A = filter 02      B = filter 10      C = filter 12
 
-SEM and TEM are never pooled. They are not two measurements of the same thing:
-at 650–2000x the SEM sees agglomerates lying on the filter, while the TEM sees
-individual structures, and their medians differ by an order of magnitude. Every
-figure keeps them in separate panels.
+Figures 1 to 4 keep SEM and TEM in separate panels. They are not two
+measurements of the same thing: at 650–2000x the SEM sees agglomerates lying on
+the filter, while the TEM sees individual structures, and their medians differ
+by an order of magnitude.
+
+Figure 5 pools them anyway, one distribution per sample, because 34 to 189
+structures per sample per instrument is too few to settle a distribution and
+the pooled 69 to 270 is better. What that costs is stated on the figure: below
+the SEM's resolution limit the curve is TEM alone, so the relative height of
+the fine and coarse modes reflects how many frames were taken on each
+instrument, not the filter. Pooling is unweighted - see figure_combined for why
+weighting by imaged area, the obvious alternative, cannot be done here.
 
 Sizes are plotted on a log axis throughout. The measured equivalent diameters
 span 0.05 to 56 µm — three orders of magnitude — and on a linear axis the whole
@@ -74,6 +82,10 @@ THRESHOLDS_UM = {"1 µm": 1.0, "200 nm": 0.2}
 # Ticks chosen by hand. Matplotlib's log minor labels collide into each other
 # at this figure width — "3 x 10^0" and "4 x 10^0" printed as one word.
 TICKS_UM = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50]
+# The smallest object the SEM can resolve: the 200 px floor every mask was
+# filtered at, at the finest SEM pixel size of 134.896 nm. Below this the
+# combined distribution is TEM alone.
+SEM_FLOOR_UM = np.sqrt(4 * 200 / np.pi) * 134.896 / 1000
 
 
 def label(sample):
@@ -294,15 +306,100 @@ def figure_loading(frames):
     save(fig, "fig4_sem_loading")
 
 
+def figure_combined(particles):
+    """
+    Both instruments in one distribution per sample, size profile and
+    cumulative, in the style of the group's other size figures.
+
+    Combined unweighted, which is the only defensible way to pool these two.
+    The obvious alternative - weight each particle by the area its instrument
+    imaged, so the pool reflects the filter rather than how many frames were
+    taken of each - assumes both instruments surveyed a fixed field. The SEM
+    did. The TEM did not: its magnification runs over 200-fold across frames
+    and correlates 0.82 with the size of the structure in the frame, because
+    the operator zoomed to suit each object. Areas from that would be
+    meaningless, so what is pooled here is the measured structures, and the
+    curve is a size profile of what was measured rather than a
+    concentration-weighted population.
+
+    The density is empirical, not a fitted lognormal. A single lognormal is
+    rejected for two of the three samples, which is what a distribution built
+    from a fine mode the TEM resolves and a coarse mode the SEM surveys should
+    do; drawing a smooth fit over that would describe neither mode.
+    """
+    from scipy import stats
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    grid = np.logspace(np.log10(particles.equiv_diameter_um.min() / 1.4),
+                       np.log10(particles.equiv_diameter_um.max() * 1.4), 400)
+
+    for sample in SAMPLES:
+        values = particles[particles["sample"] == sample].equiv_diameter_um.values
+        if not len(values):
+            continue
+        median = float(np.median(values))
+        density = stats.gaussian_kde(np.log(values), bw_method=0.35)(np.log(grid))
+        axes[0].plot(grid, density, linewidth=2.8, color=COLOURS[sample],
+                     label=label(sample))
+        axes[0].axvline(median, color=COLOURS[sample], linestyle=":", linewidth=1.8)
+
+        ordered = np.sort(values)
+        axes[1].plot(ordered, np.arange(1, len(ordered) + 1) / len(ordered),
+                     linewidth=2.8, color=COLOURS[sample],
+                     label=f"{label(sample)}  n={len(values)}  CMD={median:.2f} µm")
+        axes[1].plot([median, median], [0, 0.5], color=COLOURS[sample],
+                     linestyle="--", linewidth=1.8)
+
+    axes[1].axhline(0.5, color="black", linewidth=1.0)
+
+    for ax, letter, title, ylabel in (
+            (axes[0], "A", "Size distributions (d$N$/dln$d$)",
+             "Normalised d$N$/dln$d$"),
+            (axes[1], "B", "Cumulative particle size distributions",
+             "Cumulative probability")):
+        # Below this the SEM cannot resolve an object at all: 200 px at its
+        # finest pixel size. Everything to the left is TEM alone, so the
+        # relative height of the two modes is not a property of the filter.
+        ax.axvline(SEM_FLOOR_UM, color="0.55", linewidth=1.2, linestyle="-.")
+        ax.text(SEM_FLOOR_UM * 1.06, 0.62, "SEM resolution limit", rotation=90,
+                ha="left", va="center", fontsize=10.5, color="0.45",
+                transform=ax.get_xaxis_transform())
+        size_axis(ax, particles.equiv_diameter_um)
+        ax.set_xlim(grid[0], grid[-1])
+        ax.set_xlabel("Particle equivalent diameter (µm, log scale)",
+                      fontweight="bold")
+        ax.set_ylabel(ylabel, fontweight="bold")
+        ax.set_title(title, fontsize=15)
+        ax.spines["top"].set_visible(True)
+        ax.spines["right"].set_visible(True)
+        ax.text(-0.10, 1.06, letter, transform=ax.transAxes, fontsize=20,
+                fontweight="bold", va="top")
+
+    axes[0].set_ylim(0, None)
+    axes[0].legend(frameon=True, fontsize=12, loc="upper left")
+    axes[1].set_ylim(0, 1.0)
+    axes[1].legend(frameon=True, fontsize=11.5, loc="lower right")
+    fig.text(0.5, -0.03,
+             "TEM and SEM structures pooled per sample. Dotted and dashed "
+             "lines mark each sample's count median diameter.",
+             ha="center", fontsize=11, style="italic")
+    fig.tight_layout()
+    save(fig, "fig5_combined_size_distribution")
+
+
 def summary(particles, frames):
     """The numbers behind the figures, as a table and as a picture of one."""
     rows = []
-    for modality in MODALITIES:
+    # "Combined" last, as the pooled row figure 5 is drawn from.
+    for modality in MODALITIES + ["Combined"]:
         for sample in SAMPLES:
-            p = particles[(particles.modality == modality)
-                          & (particles["sample"] == sample)]
-            f = frames[(frames.modality == modality)
-                       & (frames["sample"] == sample)]
+            chosen = (particles["sample"] == sample)
+            in_frames = (frames["sample"] == sample)
+            if modality != "Combined":
+                chosen &= particles.modality == modality
+                in_frames &= frames.modality == modality
+            p = particles[chosen]
+            f = frames[in_frames]
             if not len(p):
                 continue
             d = p.equiv_diameter_um.values
@@ -352,6 +449,7 @@ def main():
     figure_cumulative(particles)
     figure_spread(particles)
     figure_loading(frames)
+    figure_combined(particles)
     table = summary(particles, frames)
 
     print()
