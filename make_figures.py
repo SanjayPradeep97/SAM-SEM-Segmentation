@@ -18,8 +18,9 @@ structures per sample per instrument is too few to settle a distribution and
 the pooled 69 to 270 is better. What that costs is stated on the figure: below
 the SEM's resolution limit the curve is TEM alone, so the relative height of
 the fine and coarse modes reflects how many frames were taken on each
-instrument, not the filter. Pooling is unweighted - see figure_combined for why
-weighting by imaged area, the obvious alternative, cannot be done here.
+instrument, not the filter - below 2.15 um, the 200 px floor at the SEM's
+finest pixel size, only the TEM contributes at all. Pooling is unweighted; see
+figure_combined for why weighting by imaged area cannot be done here.
 
 Sizes are plotted on a log axis throughout. The measured equivalent diameters
 span 0.05 to 56 µm — three orders of magnitude — and on a linear axis the whole
@@ -46,7 +47,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import rcParams
-from matplotlib.ticker import FixedLocator, NullFormatter, ScalarFormatter
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter
 
 DATA = Path(sys.argv[1] if len(sys.argv) > 1
             else r"D:\NIOSH Sample Images\combined")
@@ -82,10 +83,6 @@ THRESHOLDS_UM = {"1 µm": 1.0, "200 nm": 0.2}
 # Ticks chosen by hand. Matplotlib's log minor labels collide into each other
 # at this figure width — "3 x 10^0" and "4 x 10^0" printed as one word.
 TICKS_UM = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50]
-# The smallest object the SEM can resolve: the 200 px floor every mask was
-# filtered at, at the finest SEM pixel size of 134.896 nm. Below this the
-# combined distribution is TEM alone.
-SEM_FLOOR_UM = np.sqrt(4 * 200 / np.pi) * 134.896 / 1000
 
 
 def label(sample):
@@ -102,13 +99,19 @@ def save(fig, name):
 
 
 def size_axis(ax, values, which="x"):
-    """A log size axis labelled in plain numbers rather than powers."""
+    """
+    A log size axis labelled in plain numbers rather than powers.
+
+    Formatted with %g so a tick carries only the digits it needs: 0.05 and 50
+    rather than 0.05 and 50.00, which is what a shared decimal place does to
+    an axis spanning three decades.
+    """
     low, high = values.min(), values.max()
     ticks = [t for t in TICKS_UM if low / 1.6 <= t <= high * 1.6]
     axis = ax.xaxis if which == "x" else ax.yaxis
     (ax.set_xscale if which == "x" else ax.set_yscale)("log")
     axis.set_major_locator(FixedLocator(ticks))
-    axis.set_major_formatter(ScalarFormatter())
+    axis.set_major_formatter(FuncFormatter(lambda v, _pos: f"{v:g}"))
     axis.set_minor_formatter(NullFormatter())
 
 
@@ -327,28 +330,32 @@ def figure_combined(particles):
     from a fine mode the TEM resolves and a coarse mode the SEM surveys should
     do; drawing a smooth fit over that would describe neither mode.
     """
+    from matplotlib.lines import Line2D
     from scipy import stats
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6.4))
     grid = np.logspace(np.log10(particles.equiv_diameter_um.min() / 1.4),
                        np.log10(particles.equiv_diameter_um.max() * 1.4), 400)
 
+    entries = []
     for sample in SAMPLES:
         values = particles[particles["sample"] == sample].equiv_diameter_um.values
         if not len(values):
             continue
         median = float(np.median(values))
         density = stats.gaussian_kde(np.log(values), bw_method=0.35)(np.log(grid))
-        axes[0].plot(grid, density, linewidth=2.8, color=COLOURS[sample],
-                     label=label(sample))
-        axes[0].axvline(median, color=COLOURS[sample], linestyle=":", linewidth=1.8)
+        # No median line on the density panel. A vertical at the median of a
+        # curve whose peak is somewhere else reads as a feature of the curve
+        # and is not one; on the cumulative panel the same line lands on the
+        # 0.5 crossing and explains itself.
+        axes[0].plot(grid, density, linewidth=2.8, color=COLOURS[sample])
 
         ordered = np.sort(values)
         axes[1].plot(ordered, np.arange(1, len(ordered) + 1) / len(ordered),
-                     linewidth=2.8, color=COLOURS[sample],
-                     label=f"{label(sample)}  n={len(values)}  CMD={median:.2f} µm")
+                     linewidth=2.8, color=COLOURS[sample])
         axes[1].plot([median, median], [0, 0.5], color=COLOURS[sample],
                      linestyle="--", linewidth=1.8)
+        entries.append((sample, len(values), median))
 
     axes[1].axhline(0.5, color="black", linewidth=1.0)
 
@@ -357,13 +364,6 @@ def figure_combined(particles):
              "Normalised d$N$/dln$d$"),
             (axes[1], "B", "Cumulative particle size distributions",
              "Cumulative probability")):
-        # Below this the SEM cannot resolve an object at all: 200 px at its
-        # finest pixel size. Everything to the left is TEM alone, so the
-        # relative height of the two modes is not a property of the filter.
-        ax.axvline(SEM_FLOOR_UM, color="0.55", linewidth=1.2, linestyle="-.")
-        ax.text(SEM_FLOOR_UM * 1.06, 0.62, "SEM resolution limit", rotation=90,
-                ha="left", va="center", fontsize=10.5, color="0.45",
-                transform=ax.get_xaxis_transform())
         size_axis(ax, particles.equiv_diameter_um)
         ax.set_xlim(grid[0], grid[-1])
         ax.set_xlabel("Particle equivalent diameter (µm, log scale)",
@@ -376,14 +376,20 @@ def figure_combined(particles):
                 fontweight="bold", va="top")
 
     axes[0].set_ylim(0, None)
-    axes[0].legend(frameon=True, fontsize=12, loc="upper left")
     axes[1].set_ylim(0, 1.0)
-    axes[1].legend(frameon=True, fontsize=11.5, loc="lower right")
-    fig.text(0.5, -0.03,
-             "TEM and SEM structures pooled per sample. Dotted and dashed "
-             "lines mark each sample's count median diameter.",
+    # One legend, under both panels and outside them. Placed inside, it either
+    # sat over the fine mode on the left or the foot of the curves on the
+    # right, and the two panels label the same three samples anyway.
+    fig.legend(
+        [Line2D([0], [0], color=COLOURS[s], linewidth=2.8) for s, _n, _m in entries],
+        [f"{label(s)}   n={n}   CMD={median:.2f} µm" for s, n, median in entries],
+        loc="lower center", bbox_to_anchor=(0.5, -0.02), ncol=len(entries),
+        frameon=False, fontsize=12.5, columnspacing=3.0, handlelength=2.4)
+    fig.text(0.5, -0.075,
+             "TEM and SEM structures pooled per sample. Dashed lines in B mark "
+             "each sample's count median diameter.",
              ha="center", fontsize=11, style="italic")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     save(fig, "fig5_combined_size_distribution")
 
 
@@ -406,7 +412,7 @@ def summary(particles, frames):
             gm, gsd = geometric(d)
             rows.append({
                 "Instrument": modality, "Sample": label(sample),
-                "Frames": len(f), "Empty frames": int((f.n_particles == 0).sum()),
+                "Images": len(f), "Empty images": int((f.n_particles == 0).sum()),
                 "Structures": len(d),
                 "Median (µm)": np.median(d), "GM (µm)": gm, "GSD": gsd,
                 "Mean (µm)": d.mean(),
@@ -424,7 +430,7 @@ def summary(particles, frames):
         # unit alone printed it as 40.000.
         if column.startswith("Under") or "µm" not in column and column != "GSD":
             continue
-        shown[column] = shown[column].map(lambda v: f"{v:.3f}")
+        shown[column] = shown[column].map(lambda v: f"{v:.2f}")
     fig, ax = plt.subplots(figsize=(18, 1.1 + 0.42 * len(shown)))
     ax.axis("off")
     drawn = ax.table(cellText=shown.values, colLabels=shown.columns,
