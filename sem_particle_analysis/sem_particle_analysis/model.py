@@ -63,8 +63,14 @@ def discover_checkpoints(extra_dirs=None):
     Find SAM checkpoints on disk, best default first.
 
     Ordered so that the first entry is a sensible default: complete checkpoints
-    before partial ones, and larger models before smaller, since ViT-H is the
-    quality choice and the one the app defaults to.
+    before partial ones, then ViT-B before the larger models.
+
+    ViT-B is the default rather than ViT-H because of how the app is used. The
+    analyst judges and corrects every mask, so the model produces a starting
+    point rather than an answer, and ViT-B gets there several times faster from
+    a 375 MB checkpoint instead of a 2.4 GB one. Over a folder of hundreds, the
+    wait for the larger encoder costs more than its extra accuracy returns —
+    and it is one click away in the same list when a frame deserves it.
 
     Args:
         extra_dirs: Additional directories to search before the defaults.
@@ -84,7 +90,7 @@ def discover_checkpoints(extra_dirs=None):
             seen.add(target)
             found.append(path)
 
-    preference = {"vit_h": 0, "vit_l": 1, "vit_b": 2}
+    preference = {"vit_b": 0, "vit_l": 1, "vit_h": 2}
     found.sort(key=lambda p: (
         not is_full_checkpoint(p),
         preference.get(infer_model_type(p, default=None), 3),

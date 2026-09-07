@@ -85,6 +85,11 @@ class AppState:
         # Refinement state
         self.click_mode = "delete"  # "delete", "add", "merge", "point_refine"
         self.pending_deletes = []  # List of particle labels to delete
+        # A pixel inside each selected particle, keyed by the label it had when
+        # it was clicked. Labels are not stable: every edit relabels the mask
+        # from scratch, so a label recorded at click time can name a different
+        # particle by the time it is used. A pixel still names the same object.
+        self.pending_anchors = {}
         self.pending_add_points = []  # List of (x, y) click points for addition
         self.pending_add_masks = []  # List of SAM-generated masks for preview
         self.pending_merge = []  # List of particle labels to merge
@@ -131,6 +136,7 @@ class AppState:
         self.analyzer = None
         self.click_mode = "delete"
         self.pending_deletes = []
+        self.pending_anchors = {}
         self.pending_add_points = []
         self.pending_add_masks = []
         self.pending_merge = []
@@ -210,6 +216,73 @@ class AppState:
         if path:
             self.scale_by_image.pop(path, None)
 
+    # --- selections that have to survive a relabel ---------------------------
+
+    def anchor_selection(self, label, point):
+        """
+        Remember a pixel inside a particle that has been selected.
+
+        Args:
+            label (int): The particle's label at the moment it was clicked.
+            point (tuple): (x, y) in image coordinates, inside the particle.
+        """
+        if label is not None:
+            self.pending_anchors[int(label)] = (int(point[0]), int(point[1]))
+
+    def resolve_label(self, label, labeled_mask):
+        """
+        The label a selected particle carries now.
+
+        Returns:
+            int or None: Its current label, or None if it no longer exists —
+            deleted by an earlier stage of the same Apply, or dropped by an edge
+            clean-up since it was clicked.
+        """
+        if label is None or labeled_mask is None:
+            return None
+        point = self.pending_anchors.get(int(label))
+        if point is None:
+            # Never anchored: the best that can be done is to take it at face
+            # value, which is what the code did for everything before.
+            return int(label)
+        x, y = point
+        height, width = labeled_mask.shape
+        if not (0 <= y < height and 0 <= x < width):
+            return None
+        return int(labeled_mask[y, x]) or None
+
+    def reindex_pending(self, labeled_mask):
+        """
+        Rewrite pending selections after something has relabelled the mask.
+
+        Called by any operation that edits the mask while clicks are still
+        queued. Without it those clicks go on naming labels that now belong to
+        different particles, and applying them edits the wrong ones.
+        """
+        anchors = {}
+
+        def carry(labels):
+            kept = []
+            for label in labels:
+                current = self.resolve_label(label, labeled_mask)
+                if current is None:
+                    continue
+                anchor = self.pending_anchors.get(int(label))
+                if anchor is not None:
+                    anchors[current] = anchor
+                kept.append(current)
+            return kept
+
+        deletes = carry(self.pending_deletes)
+        merges = carry(self.pending_merge)
+        refine = carry([self.point_refine_particle]
+                       if self.point_refine_particle is not None else [])
+
+        self.pending_deletes = deletes
+        self.pending_merge = merges
+        self.point_refine_particle = refine[0] if refine else None
+        self.pending_anchors = anchors
+
     def mark_processed(self, index, num_particles):
         """Mark an image as processed."""
         self.processed_images[index] = {
@@ -240,6 +313,7 @@ class AppState:
         self.undo_history.append({
             'mode': self.click_mode,
             'pending_deletes': self.pending_deletes.copy(),
+            'pending_anchors': self.pending_anchors.copy(),
             'pending_add_points': self.pending_add_points.copy(),
             'pending_add_masks': [mask.copy() for mask in self.pending_add_masks],  # Deep copy numpy arrays
             'pending_merge': self.pending_merge.copy(),
@@ -297,22 +371,24 @@ class AppState:
         if len(results_df) == 0:
             return 0, 0
 
-        # Build lookup: filename -> num_particles
-        csv_filenames = {}
+        # Matched on the name without its extension. The review app reads PNG
+        # copies of frames the analysis measured as TIFFs, so the full names
+        # never agree and not one reviewed frame came back ticked — the gallery
+        # said no work had been done at all.
+        by_stem = {}
         for _, row in results_df.iterrows():
-            csv_filenames[row['file_name']] = int(row['num_particles'])
+            stem = os.path.splitext(str(row['file_name']))[0]
+            by_stem[stem] = int(row['num_particles'])
 
-        # Match loaded images against CSV
         matched = 0
         for idx, img_path in enumerate(self.image_paths):
-            basename = os.path.basename(img_path)
-            if basename in csv_filenames:
-                self.mark_processed(idx, csv_filenames[basename])
+            stem = os.path.splitext(os.path.basename(img_path))[0]
+            if stem in by_stem:
+                self.mark_processed(idx, by_stem[stem])
                 matched += 1
 
-        # Count CSV entries with no matching uploaded image
-        image_basenames = {os.path.basename(p) for p in self.image_paths}
-        unmatched = sum(1 for fn in csv_filenames if fn not in image_basenames)
+        loaded = {os.path.splitext(os.path.basename(p))[0] for p in self.image_paths}
+        unmatched = sum(1 for stem in by_stem if stem not in loaded)
 
         return matched, unmatched
 

@@ -2,6 +2,10 @@
 Results tab: saving, summarising and exporting measurements.
 """
 import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
 import gradio as gr
 import numpy as np
 
@@ -10,8 +14,23 @@ from sem_particle_analysis.data_manager import parse_measurement_list
 from ..state import state
 from .gallery import create_image_gallery
 
-def save_current_results():
-    """Save current image results and mark as processed."""
+def save_current_results(file_name=None):
+    """
+    Save current image results and mark as processed.
+
+    Args:
+        file_name (str, optional): What to record the frame as. Defaults to the
+            basename of the open file. The review app passes the name the
+            analysis used, so a reviewed row and an automatic one refer to the
+            same frame by the same name — it works from PNG copies of TIFFs, and
+            without this the two files could not be lined up at all.
+
+    Saving a frame that has already been saved replaces its row. Going back to
+    a frame to correct it is normal work, and it used to leave two rows behind:
+    the same frame counted twice in every total drawn from the file, with only
+    the Remove duplicates button — which nothing prompts anyone to press — to
+    catch it.
+    """
     try:
         if state.analyzer is None:
             return "❌ No analysis to save", None
@@ -30,9 +49,11 @@ def save_current_results():
         scale_method = calibration.provenance if calibration is not None else "none"
 
         # Save to CSV
-        filename = os.path.basename(state.image_paths[state.current_index])
+        filename = file_name or os.path.basename(
+            state.image_paths[state.current_index])
         state.results_manager.add_result(filename, measurements,
-                                         scale_method=scale_method)
+                                         scale_method=scale_method,
+                                         replace=True)
 
         # Mark as processed
         state.mark_processed(state.current_index, measurements['num_particles'])
@@ -148,16 +169,34 @@ def delete_result_row(selected_item):
 
 
 def export_results():
-    """Export all results to CSV."""
+    """
+    Hand over a copy of the results to download.
+
+    A copy, in a temporary directory, rather than the results file itself.
+    Gradio serves only files under paths it has been allowed, and the results
+    normally sit beside the images on another drive — so returning the live file
+    made the download button do nothing at all, with no error anywhere the
+    analyst could see it.
+
+    Returns:
+        tuple: (file to download or None, what happened)
+    """
     try:
-        if state.results_manager is None or len(state.results_manager.results_df) == 0:
-            return None
+        if state.results_manager is None:
+            return None, "❌ Nothing to export — no results file is open."
+        table = state.results_manager.get_results()
+        if len(table) == 0:
+            return None, "❌ Nothing to export yet — save a frame first."
 
-        csv_path = state.results_manager.csv_file
-        return csv_path
+        source = Path(state.results_manager.csv_file)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        copy = Path(tempfile.mkdtemp(prefix="export-")) / f"{source.stem}_{stamp}.csv"
+        table.to_csv(copy, index=False)
 
-    except Exception:
-        return None
+        return str(copy), (f"✅ {len(table)} rows ready to download. The working "
+                           f"copy stays at {source}")
+    except Exception as problem:
+        return None, f"❌ Export failed: {problem}"
 
 
 def check_and_remove_duplicates():

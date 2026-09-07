@@ -687,7 +687,7 @@ def create_interface():
                                       delete_row_status])
         remove_duplicates_btn.click(check_and_remove_duplicates,
                                     outputs=[session_table, duplicates_status])
-        export_btn.click(export_results, outputs=[export_file])
+        export_btn.click(export_results, outputs=[export_file, export_status])
 
         # ---- Plots ----
         update_plots_btn.click(update_histogram_plots,

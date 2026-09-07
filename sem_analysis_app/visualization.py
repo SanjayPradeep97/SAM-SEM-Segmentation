@@ -60,8 +60,14 @@ def create_particle_visualization(image, labeled_mask, regions, show_labels=True
         # Get binary mask for this particle
         mask_i = (labeled_mask == region.label).astype(np.uint8)
 
-        # Find contours
-        contours, _ = cv2.findContours(mask_i, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # RETR_CCOMP, not RETR_EXTERNAL: a particle can have a hole in it — a
+        # nanotube that loops back on itself encloses background, and that
+        # background is not part of the particle. RETR_EXTERNAL returns only
+        # outer boundaries, so such a particle was drawn as a solid blob however
+        # carefully its hole had been cut out. The measurement was right and the
+        # picture disagreed with it, which is the wrong way round for a view
+        # whose whole job is letting the mask be judged.
+        contours, _ = cv2.findContours(mask_i, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
 
         # Choose color based on status
         if region.label in pending_deletes:
@@ -104,7 +110,7 @@ def create_particle_visualization(image, labeled_mask, regions, show_labels=True
     for add_mask in pending_add_masks:
         if add_mask is not None and add_mask.any():
             mask_uint8 = add_mask.astype(np.uint8)
-            contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(mask_uint8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(vis_image, contours, -1, (0, 255, 0), 4)  # Green, thick
 
     return vis_image
@@ -128,7 +134,7 @@ def create_point_refine_visualization(image, refined_mask, point_coords, point_l
     # Draw the refined mask contour in white
     if refined_mask is not None and refined_mask.any():
         mask_uint8 = refined_mask.astype(np.uint8)
-        contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask_uint8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(vis_image, contours, -1, (255, 255, 255), 3)  # White thick outline
 
     # Draw point markers
