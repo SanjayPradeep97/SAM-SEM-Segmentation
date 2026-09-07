@@ -233,7 +233,8 @@ needed to recompute it.
 ## Tests
 
 ```bash
-pytest                                       # segmentation library and apps, about a minute
+pytest -m "not slow"                        # segmentation library and apps, under a minute, in the cnt-vfm env
+pytest                                       # + the tests that need SAM weights and EasyOCR (segmentation-tool env)
 cd classification
 python test_protocol.py                      # 42 checks on the protocol (needs one feature cache)
 python mutants.py                            # re-injects 7 audited bugs; all must be caught

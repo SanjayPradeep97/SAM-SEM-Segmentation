@@ -44,10 +44,21 @@ PROBE = """
 
 @pytest.fixture(scope="module")
 def probe():
-    """Import the package in a clean interpreter and report what happened."""
+    """Import the package in a clean interpreter and report what happened.
+
+    The interpreter is pointed at the directory that holds the package, as
+    conftest.py does for the in-process tests, so the probe works from a plain
+    checkout as well as from an editable install.  (Run from the repository
+    root without that, Python would import the outer ``sem_particle_analysis/``
+    project folder as an empty namespace package.)"""
+    import os
+    from pathlib import Path
+    pkg_dir = str(Path(__file__).resolve().parent.parent / "sem_particle_analysis")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = pkg_dir + os.pathsep + env.get("PYTHONPATH", "")
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(PROBE)],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True, text=True, timeout=300, env=env,
     )
     assert result.returncode == 0, (
         f"importing sem_particle_analysis failed:\n{result.stderr}")
