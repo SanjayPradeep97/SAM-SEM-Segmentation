@@ -8,6 +8,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# No data root is needed: the fake YOLO never downloads anything.  cache_setup
+# still wants CNT_BASE for its download-cache directory, so point it at the
+# same temporary directory the test works in.
+os.environ.setdefault("CNT_BASE", tempfile.mkdtemp())
 
 CALLS = []
 

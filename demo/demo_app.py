@@ -179,7 +179,9 @@ def run_sam(s, mode):
 def click(mode, s, evt: gr.SelectData):
     if s is None or s.gray is None:
         return None, "Choose an image first.", s
-    x, y = evt.index
+    x, y = (evt.index or (None, None))[:2]
+    if x is None or y is None:                     # click landed outside the picture
+        return render(s), "Click inside the image.", s
     sc = s.gray.shape[1] / DISPLAY_W
     if s.source == "expert":                       # a click starts over from the expert mask
         s.points, s.labels = [], []
@@ -260,8 +262,7 @@ with gr.Blocks(title="CNT segment + classify demo") as app:
         with gr.Column(scale=3):
             sel = gr.Dropdown(CHOICES, value=None, label="micrograph (held-out test set, fixed shuffled order)",
                               info="pick one to load it")
-            img = gr.Image(type="pil", label="click on a particle", interactive=False,
-                           height=int(DISPLAY_W * 1040 / 1350 * 0.75))
+            img = gr.Image(type="pil", label="click on a particle", interactive=False)
         with gr.Column(scale=2):
             mode = gr.Radio(["Positive point (this is the particle)",
                              "Negative point (this is background)"],
