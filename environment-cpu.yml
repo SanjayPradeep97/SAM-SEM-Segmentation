@@ -1,0 +1,40 @@
+# Classification pipeline + demo environment WITHOUT CUDA (`cnt-vfm`).
+#
+# Use this on macOS, on Linux/Windows machines without an NVIDIA GPU, or
+# whenever environment.yml fails to resolve the CUDA 12.8 torch build.  Same
+# package set as environment.yml; torch comes from PyPI (CPU on Windows/Linux,
+# CPU + MPS on Apple silicon).
+#
+#     conda env create -f environment-cpu.yml
+#     conda activate cnt-vfm
+#     python classification/check_env.py
+#
+# What runs on CPU: the demo (a few seconds per click), the statistics, the
+# tables, the manuscript check, the tests, the figures.  Feature extraction for
+# the full benchmark (reproduce.bat / reproduce.sh stages 1-2) takes hours
+# rather than minutes, and stage 3 is impractical without a GPU.
+name: cnt-vfm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - torch>=2.6
+      - torchvision
+      - timm>=1.0.15
+      - huggingface_hub
+      - xgboost>=2.1
+      - scikit-learn>=1.4
+      - scipy
+      - numpy
+      - pandas
+      - pillow
+      - matplotlib
+      - seaborn
+      - opencv-python
+      - scikit-image
+      - tqdm
+      - ultralytics>=8.3
+      - gradio>=5
+      - git+https://github.com/facebookresearch/segment-anything.git

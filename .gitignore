@@ -61,7 +61,7 @@ _work/
 runs/
 *.npz
 *.npy
-demo/images/
 results/figures/*.pdf
 yolo*.pt
 *.part
+demo/images/**/*.tif

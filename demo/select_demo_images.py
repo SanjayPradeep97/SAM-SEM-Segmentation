@@ -42,10 +42,14 @@ primary = next(e for e in entries
                if e["key"] == "dinov2_b14[g37_L1-3-6-9-11]|masked|avg+max|mlp")
 prim_ok = np.array(primary["pred_ensemble"]) == y
 
+# only images that are in the public Dataverse record are eligible, so every
+# demo image can be traced to its deposited original (splits/dataverse_files.txt)
+DATAVERSE = {l.strip() for l in open(HERE.parent / "splits" / "dataverse_files.txt") if not l.startswith("#")}
+
 picked = []
 for cls in CLASSES:
     cand = [(int(n_right[i]), r["filename"], i) for i, r in enumerate(test_rows)
-            if r["category"] == cls and prim_ok[i]]
+            if r["category"] == cls and prim_ok[i] and r["filename"] in DATAVERSE]
     cand.sort(key=lambda t: (-t[0], t[1]))         # most configs right, then by name
     for n, fn, i in cand[:PER_CLASS]:
         picked.append(dict(filename=fn, category=cls, split="test",

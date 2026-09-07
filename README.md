@@ -21,20 +21,21 @@ The project does two things:
    the Luo et al. re-implementation and every statistical test are in
    [`classification/`](classification/) and [`baseline/`](baseline/).
 
-A small [demo](demo/README.md) joins the two: click on a particle, SAM masks
-it, the classifier labels it.
+A [demo](demo/README.md) joins the two on 60 included micrographs: click on a
+particle, SAM masks it, the classifier labels it. `demo/run_demo.bat` (or
+`.sh`) is the one-command start.
 
 ## Repository layout
 
 | directory | what it holds |
 |---|---|
-| `sem_particle_analysis/`, `sem_analysis_app/`, `tests/` | the segmentation library, its Gradio app and its test suite (unchanged from `main`) |
+| `sem_particle_analysis/`, `sem_analysis_app/`, `sem_review_app/`, `tests/` | the segmentation library, its Gradio app, the review app for correcting a batch analysis, and their test suite (as on `main`) |
 | `classification/` | protocol, feature extraction, probes, fine-tuned baselines, statistics, figure and table scripts, tests |
 | `baseline/` | the Luo et al. (2021) VGG-16 + VLAD re-implementation and its results |
 | `results/` | the run the paper reports: every configuration's metrics and **per-image predictions**, `analysis.json`, the epoch sweep, regenerated figures |
 | `splits/` | `dataset_splits.pkl`, the 1,785-image partition every number uses, plus the same as a CSV |
-| `demo/` | the click-to-classify demonstration |
-| `reproduce.bat` | the one-command reproduction |
+| `demo/` | the click-to-classify demonstration, with 60 held-out micrographs, their expert masks and the paper's classifier heads |
+| `reproduce.bat`, `reproduce.sh` | the one-command reproduction (Windows / Linux-macOS) |
 
 ## Install
 
@@ -43,7 +44,8 @@ Two conda environments, one per half of the project.
 **Classification pipeline, baseline and demo** (`cnt-vfm`):
 
 ```bash
-conda env create -f environment.yml
+conda env create -f environment.yml          # NVIDIA GPU (CUDA 12.8 wheels)
+conda env create -f environment-cpu.yml      # no CUDA: macOS, or CPU-only machines
 conda activate cnt-vfm
 python classification/check_env.py
 ```
@@ -53,17 +55,38 @@ python classification/check_env.py
 Gradio and is kept separate because EasyOCR pins its own PyTorch.
 
 A minimal environment for the baseline alone is in `baseline/environment.yml`.
-GPU notes: PyTorch is taken from the CUDA 12.8 wheel index so an RTX 50-series
-card works; everything also runs on CPU, more slowly.
+The CUDA file pins the `+cu128` PyTorch build so an RTX 50-series card works
+(an unpinned `torch` resolves to a CPU-only wheel); the CPU file takes PyTorch
+from PyPI. The demo, the statistics, the tables and the tests run on CPU;
+re-extracting features and re-running the benchmark want a GPU.
 
 ## Data
 
-The TEM images are third-party and are **not in this repository**. They are the
-NIOSH dataset on Harvard Dataverse,
+The TEM images come from the NIOSH collection deposited on Harvard Dataverse,
 <https://doi.org/10.7910/DVN/5O0SF7> (*Dataset of TEM Images for Carbon
-Nanomaterial Classification*, 5,323 images, licence CC BY-NC 4.0). The paper
-uses 1,785 of them; `splits/dataset_splits.csv` lists which, and in which
+Nanomaterial Classification*, 5,323 files, licence CC BY-NC 4.0). The paper
+uses 1,785 images; `splits/dataset_splits.csv` lists which, and in which
 partition.
+
+**Coverage of the public deposit, stated exactly.** 1,705 of the 1,785 are in
+the Dataverse record under the same file names, pixel for pixel (checked on a
+sample of 12 across all four classes). The remaining 80 (64 train, 8
+validation, 8 test; listed in `splits/not_on_dataverse.csv`) are from the same
+NIOSH collection but are not in the current Dataverse version;
+`splits/dataverse_files.txt` is the record's file list as retrieved on
+2026-09-07. Those 80 images and all 1,785 masks are distributed with the
+paper's data archive (see the paper's Code availability statement), so the
+benchmark is reproducible from the archive but not from Dataverse alone.
+`python classification/check_data.py` reports what a local data root is
+missing.
+
+**Sixty of them are included**, with their expert masks, under
+[`demo/images/`](demo/images/) and [`demo/masks/`](demo/masks/), so the
+segment-then-classify pipeline can be tried without downloading anything else
+(see [`demo/ATTRIBUTION.md`](demo/ATTRIBUTION.md) for the licence terms). All
+sixty are in the Dataverse record; `demo/fetch_demo_images.py --download
+--verify` fetches the originals and confirms the shipped PNGs are identical.
+The full dataset is needed only to re-run the benchmark itself.
 
 Set `CNT_BASE` to a directory laid out as
 
@@ -79,11 +102,10 @@ Feature caches (`Encoder Benchmark/`, about 1.5 GB) and download caches
 location; `classification/cnt_paths.py` is the single place paths are resolved.
 
 **Masks.** The 1,785 masks were made with the segmentation tool in this
-repository and are distributed with the paper's data archive rather than in
-this branch, because they are derived from the CC BY-NC images and the
-authors have not yet confirmed redistribution here. Until the archive link is
-in the paper, regenerate any mask with the tool (`docs/SEGMENTATION_TOOL.md`,
-"Interactive refinement") or use the demo, which makes masks live. The
+repository. The 60 that belong to the demo images are in `demo/masks/`; the
+full set is distributed with the paper's data archive rather than in this
+branch. Any mask can be regenerated with the tool (`docs/SEGMENTATION_TOOL.md`,
+"Interactive refinement") or with the demo, which makes masks live. The
 classification pipeline refuses to run if a mask is missing, and says so.
 
 The SEM images of Table 1 were acquired under a collaboration that does not
@@ -211,13 +233,19 @@ needed to recompute it.
 ## Tests
 
 ```bash
-pytest                                       # segmentation library, under a minute
+pytest                                       # segmentation library and apps, about a minute
 cd classification
 python test_protocol.py                      # 42 checks on the protocol (needs one feature cache)
 python mutants.py                            # re-injects 7 audited bugs; all must be caught
 python test_yolo_adapter.py                  # no GPU or images needed
 python test_cache.py
+python check_data.py                         # is every image and mask of the split present under CNT_BASE?
 ```
+
+The demo has its own checks: `demo/train_demo_head.py` refuses to write heads
+whose test predictions differ from the shipped per-image predictions, and
+`demo/fetch_demo_images.py --download --verify` confirms the shipped PNGs are
+pixel-identical to the Dataverse originals.
 
 ## Citation
 
