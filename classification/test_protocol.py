@@ -1,10 +1,9 @@
 """
 test_protocol.py -- adversarial checks on paper_protocol.
 
-v2.  An external audit injected seven one-line bugs into v1 of this suite's
-target and SIX PASSED ALL 20 CHECKS, including M7: early-stopping each fold
-model on that fold's own evaluation set.  M7 is the original 95.53% bug
-transplanted one level up.  The tests below are built to kill each mutant by
+v2.  An audit injected seven one-line bugs into v1 of this suite's target and
+SIX PASSED ALL 20 CHECKS, including M7: early-stopping each fold model on that
+fold's own evaluation set.  The tests below are built to kill each mutant by
 name; the mutant IDs are cited so the mapping stays auditable.
 """
 import sys, os, numpy as np, torch

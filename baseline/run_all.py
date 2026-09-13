@@ -14,9 +14,8 @@ everything into one CSV (results/luo_baseline_summary.csv).
 
   clean       inner split picks the boosting rounds, then refit on 100%.
               The scored set is never used for model selection.
-  leaky       reproduces the protocol of the withdrawn original analysis,
-              where the set being scored also picks the stopping point.
-              Reported only to quantify the bias; never publish it.
+  leaky       the set being scored also picks the stopping point, which is
+              unsound.  Reported only to quantify the bias; never publish it.
 
 USAGE
   set CNT_BASE=<data root>

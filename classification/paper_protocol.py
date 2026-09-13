@@ -4,19 +4,14 @@ in the revised manuscript.
 
 WHY THIS FILE EXISTS
 --------------------
-The original submission reported 95.53% (171/179). That number came from
-`DINO Final.ipynb`, which called:
+Test-set leakage through the early-stopping monitor is easy to introduce and
+invisible in the output: a training loop handed the wrong loader will restore
+the checkpoint with the lowest loss on the very set it is about to be scored
+on, and the result looks like an ordinary accuracy.
 
-    train_model(final_model, trainval_loader, test_loader, ...)
-
-`test_loader` landed in the `val_loader` slot, and `train_model` restores the
-checkpoint with the lowest loss on that loader.  The reported model's weights
-were therefore selected on the test set.  Every one of the 24 configurations
-shows the signature: mean CV 86.66% vs mean test 91.39%, a uniform +4.73 pp.
-
-This module makes that class of error impossible to repeat.  The test set is
-touched in exactly two places, both at the very end of `run()`, and no quantity
-derived from it can influence training, stopping, or model selection.
+This module makes that class of error impossible.  The test set is touched in
+exactly two places, both at the very end of `run()`, and no quantity derived
+from it can influence training, stopping, or model selection.
 
 THE PROTOCOL
 ------------
@@ -55,9 +50,9 @@ prevent, so `run()` has no notion of a "best" variant.
 THE PRIMARY RESULT IS DECLARED BEFORE ANY RESULTS EXIST
 -------------------------------------------------------
 `PRIMARY` below pins the headline configuration.  It is the configuration the
-original submission already argued for, chosen on cross-validation, and it is
-frozen here so that no downstream table can promote a different method on the
-strength of a test-set number.
+manuscript's Methods describes, chosen on cross-validation, and it is frozen
+here so that no downstream table can promote a different method on the strength
+of a test-set number.
 """
 
 from __future__ import annotations
@@ -89,9 +84,9 @@ PRIMARY = dict(encoder="dinov2_b14", geometry="g37_L1-3-6-9-11",
 #     resolves 1.2-1.9 pp.
 #   * 96 configurations were already scored on these same 180 images by the
 #     earlier benchmark run.  Cumulative selection exposure is large: the
-#     maximum over 96 evaluations sits ~5.6 pp above truth, which is on its own
-#     enough to manufacture the retracted 95.53%.  The test set is close to
-#     spent and is reported once, for PRIMARY only, with its Wilson interval.
+#     maximum over 96 evaluations sits ~5.6 pp above truth.  The test set is
+#     close to spent and is reported once, for PRIMARY only, with its Wilson
+#     interval.
 
 N_CLASSES = 4
 

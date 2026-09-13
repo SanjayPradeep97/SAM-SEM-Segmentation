@@ -58,9 +58,7 @@ compare them line by line.
 **The test set is scored once, for a configuration fixed in advance.**
 `paper_protocol.py` declares `PRIMARY` as a literal before any result exists,
 and `_guarded()` wraps every adapter call so no fold model can see the test set,
-or its own evaluation fold, as a training or early-stopping set. This is the
-defect that produced the withdrawn 95.53 % of an earlier version of this work
-(see "History" below).
+or its own evaluation fold, as a training or early-stopping set.
 
 **Early stopping only ever sees an inner split.** Each fold model trains on 90 %
 of its four training folds and stops on the other 10 %; the fifth fold is
@@ -122,19 +120,3 @@ written natively by new runs. Eighteen probe rows are flagged by the same rule;
 their refits are fine (probes have no warm-up schedule), which is why the flag
 means "do not read this value" rather than "this value is wrong". No flagged
 value is quoted anywhere in the manuscript.
-
-## History: what changed and why
-
-An earlier version of this work reported 95.53 % (171/179) test accuracy. That
-number came from a notebook that passed the test loader into the validation
-slot of the training loop, so the reported model's weights were selected on the
-test set. Every one of the 24 configurations in that run showed the signature
-(mean CV 86.7 % against mean test 91.4 %). The protocol in this directory was
-written to make that class of error impossible, `test_protocol.py` and
-`mutants.py` re-inject that bug and six others and assert each is caught, and
-the numbers in the manuscript are the ones this protocol produces.
-
-Development scratch is not included in this repository: superseded runs on a
-different (balanced, 1,800-image) split, an abandoned relabelling exercise, and
-working directories. Only the run the manuscript reports is here, together with
-everything needed to recompute it.

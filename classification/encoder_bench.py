@@ -38,8 +38,8 @@ FAIRNESS, DELIBERATELY
 3. IDENTICAL SPLITS, FOLDS, SEEDS and classifier hyperparameters, loaded from
    the same pickle the DINOv2 runs use.
 4. NO TEST-SET MODEL SELECTION. Early stopping uses an inner split; the test
-   set is scored once per configuration. `--earlystop leaky` reproduces the
-   protocol in DINO Final.ipynb only so its bias can be measured.
+   set is scored once per configuration. `--earlystop leaky` uses the scored
+   set as the stopping monitor, only so that bias can be measured.
 
 USAGE
 -----

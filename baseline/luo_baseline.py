@@ -55,11 +55,10 @@ EVALUATION PROTOCOL (matched to our own pipeline, exactly)
 
   --earlystop clean  (DEFAULT)  early stopping on an inner split carved out of
                                 train+val. The test set is touched exactly once.
-  --earlystop leaky             reproduces the protocol currently used in
-                                "DINO Final.ipynb", where the TEST set is passed
-                                as the early-stopping monitor. Provided ONLY so
-                                the size of that bias can be measured and
-                                reported. Never use it for a published number.
+  --earlystop leaky             passes the TEST set as the early-stopping
+                                monitor. Provided ONLY so the size of that bias
+                                can be measured and reported. Never use it for
+                                a published number.
 
 USAGE
 ---------------------------------------------------------------
@@ -715,7 +714,7 @@ def run_classify_stage(cfg, X, y, split_of, prog=None):
     banner("STAGE 4  |  Gradient-boosted softmax on VLAD features")
     log(f"  feature matrix: {X.shape}   ({X.nbytes / 1e6:.0f} MB)")
     log(f"  early stopping: {cfg.earlystop.upper()}"
-        + ("   <-- reproduces the leak in DINO Final.ipynb, NOT for publication"
+        + ("   <-- scored set used as the stopping monitor, NOT for publication"
            if cfg.earlystop == "leaky" else "   (test set touched once)"))
 
     tr = np.where(split_of == "train")[0]

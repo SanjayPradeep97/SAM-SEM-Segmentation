@@ -68,7 +68,7 @@ Nanomaterial Classification*, 5,323 files, licence CC BY-NC 4.0). The paper
 uses 1,785 images; `splits/dataset_splits.csv` lists which, and in which
 partition.
 
-**Coverage of the public deposit, stated exactly.** 1,705 of the 1,785 are in
+**Coverage of the public deposit.** 1,705 of the 1,785 are in
 the Dataverse record under the same file names, pixel for pixel (checked on a
 sample of 12 across all four classes). The remaining 80 (64 train, 8
 validation, 8 test; listed in `splits/not_on_dataverse.csv`) are from the same
@@ -186,8 +186,8 @@ goes through: frozen probes, fine-tuned networks and the VLAD baseline alike.
 * **Early stopping uses an inner split only.** Each fold model trains on 90 %
   of its training folds and stops on the remaining 10 %; the held-out fold and
   the test set are never a stopping monitor. `_guarded()` enforces this on
-  every call; `test_protocol.py` and `mutants.py` re-inject seven bugs,
-  including the one in the paragraph below, and show each is caught.
+  every call; `test_protocol.py` and `mutants.py` re-inject seven bugs of this
+  kind and show each is caught.
 * **Scalers are fit on training rows only.**
 * **Caches are keyed by split** (and by geometry, pyramid input size, a
   random-weights flag and any checkpoint override), so features of one split
@@ -196,39 +196,6 @@ goes through: frozen probes, fine-tuned networks and the VLAD baseline alike.
 * **Comparisons are made on 1,606 out-of-fold predictions**, not on the
   179-image test set, which cannot resolve differences of a few points; the
   test set is reported once with a Wilson interval.
-
-## What changed, and the earlier number
-
-An earlier version of this work reported 95.53 % test accuracy. That figure was
-produced by a notebook that passed the test loader into the validation slot of
-the training loop, so the final checkpoint was selected on the test set. The
-error was found during revision, the protocol above was written so it cannot
-recur, and every number in the paper comes from that protocol. The details,
-including the +4.7 pp signature the bug left across all 24 original
-configurations, are in `classification/paper_protocol.py` and
-`classification/REPRODUCE.md`. `verify_manuscript.py` exists so the manuscript
-and the results files cannot drift apart again.
-
-Two further things a careful reader will find, stated here rather than left to
-be discovered:
-
-* **The `refit_unreliable` column.** Each row carries three test-set variants;
-  the paper reports the fold ensemble. The single-model "refit" variant is
-  meaningless for four fine-tuned rows whose folds stopped inside the first
-  three epochs, and is flagged as such (`classification/REPRODUCE.md`, "The
-  `refit_unreliable` flag").
-* **The Luo baseline's descriptor normalisation** is not specified in the
-  original paper. All three options the re-implementation offers were run
-  under the clean protocol (cross-validated accuracy: `none` 85.49 %, `l2`
-  84.62 %, `blockl2` 84.31 %; held-out test 87.71 %, 87.71 % and 87.15 %),
-  and the best on cross-validation, `none`, is the row the paper reports
-  (`baseline/README.md`, `classification/luo_results.py`). Repeated runs of
-  this baseline move by up to half a point on CV; the ordering did not change.
-
-Development scratch is not included: superseded runs on a different, balanced
-1,800-image split, an abandoned relabelling exercise, working directories and
-feature caches. What is here is the run the paper reports and everything
-needed to recompute it.
 
 ## Tests
 

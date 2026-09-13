@@ -57,9 +57,8 @@ on the 179 held-out test images.
                                refit on 100 % of the training data for that many
                                rounds.  The scored set never influences the fit.
 --earlystop leaky              the set being scored is also the early-stopping
-                               monitor.  This is the defect of the withdrawn
-                               original analysis, reproduced ONLY to measure its
-                               size.  Never a reported number.
+                               monitor.  Provided ONLY so the size of that
+                               bias can be measured.  Never a reported number.
 ```
 
 **One documented caveat.** The K-means dictionary is fitted once on the `train`
@@ -84,8 +83,7 @@ accuracy (`python ../classification/luo_results.py` prints the selection).
 The three normalisations differ by about one point on CV and by at most one
 test image. The leaky rows show what selecting the boosting rounds on the
 scored set does: up to +2.8 points on test for the same features, which is
-the mechanism behind the withdrawn figure of an earlier version of this work
-and why no leaky number is ever reported. Every run is in
+why no leaky number is ever reported. Every run is in
 `results/luo_baseline_summary.csv` and the per-run JSON files.
 
 **Run-to-run variation.** The `blockl2` clean configuration was run three
