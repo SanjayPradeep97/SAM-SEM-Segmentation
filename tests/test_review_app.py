@@ -18,7 +18,6 @@ from PIL import Image
 pytest.importorskip("gradio")
 
 from sem_particle_analysis import ResultsManager
-from sem_particle_analysis import scale_calibration as sc
 from synthetic import make_disk_mask
 
 

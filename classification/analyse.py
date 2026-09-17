@@ -28,7 +28,6 @@ here is 1/k + n_test/n_train = 1/5 + 324/1296 = 0.450 against the naive 0.200 --
 the uncorrected standard error is understated by 1.50x.
 """
 from __future__ import annotations
-import itertools, json
 import numpy as np
 
 
@@ -45,21 +44,6 @@ def mcnemar_exact(pred_a, pred_b, y):
     tail = sum(comb(n, i) for i in range(0, min(b, c) + 1))
     p = min(1.0, 2.0 * tail / (2 ** n))
     return b, c, p
-
-
-def nadeau_bengio_t(diffs, n_train, n_test):
-    """Corrected resampled t-test for k-fold differences (Nadeau & Bengio 2003)."""
-    d = np.asarray(diffs, dtype=float)
-    k = len(d)
-    if k < 2:
-        return float("nan"), float("nan")
-    var = d.var(ddof=1)
-    if var == 0:
-        return float("inf") if d.mean() != 0 else 0.0, 0.0
-    mult = 1.0 / k + n_test / n_train
-    t = d.mean() / np.sqrt(var * mult)
-    from scipy import stats
-    return float(t), float(2 * stats.t.sf(abs(t), df=k - 1))
 
 
 def holm(pvals, labels):

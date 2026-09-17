@@ -8,7 +8,7 @@ MatrixSurface. Sixty micrographs and their expert masks ship with the
 repository, so nothing has to be downloaded except the SAM checkpoint.
 
 It is deliberately not the full analysis application (that is
-[`sem_analysis_app/`](../sem_analysis_app/README.md)): no scale bars, no
+[`sem_analysis_app/`](../docs/SEGMENTATION_TOOL.md)): no scale bars, no
 measurement, no batch mode. Just click, mask, label.
 
 ## Start it

@@ -11,7 +11,6 @@ uses. It is the "Luo et al. (re-implementation)" row of Table 3.
 |---|---|
 | `luo_baseline.py` | the re-implementation: features (VGG-16 hypercolumns, K-means dictionary, VLAD) and the XGBoost classifier |
 | `run_all.py` | runs every descriptor normalisation x {clean, leaky} and writes `results/luo_baseline_summary.csv` |
-| `environment.yml` | minimal conda env (`cnt-luo`); the pipeline env `../environment.yml` also works |
 | `results/luo_results_*.json` | one file per run: configuration, CV folds, held-out test result, confusion matrix |
 | `results/luo_baseline_summary.csv` | all runs in one table (rebuild with `python run_all.py --report`) |
 
@@ -100,7 +99,7 @@ three variants. `none` was the best on CV in every run.
 ## Running it
 
 ```bat
-conda activate cnt-vfm            :: or cnt-luo from baseline/environment.yml
+conda activate cnt-vfm
 set CNT_BASE=<data root>          :: see ../classification/cnt_paths.py
 cd baseline
 python run_all.py                 :: none + l2 + blockl2, clean + leaky; ~2 h on an RTX 5080

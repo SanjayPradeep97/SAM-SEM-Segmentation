@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sem-particle-analysis"
 version = "0.2.0"
-description = "AI-powered particle segmentation and analysis for SEM/TEM images using Meta's SAM"
+description = "Particle segmentation and measurement in SEM/TEM micrographs, built on Segment Anything"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -58,7 +58,7 @@ Homepage = "https://github.com/SanjayPradeep97/SAM-SEM-Segmentation"
 Repository = "https://github.com/SanjayPradeep97/SAM-SEM-Segmentation"
 
 [tool.setuptools.packages.find]
-where = ["sem_particle_analysis"]
+include = ["sem_particle_analysis*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

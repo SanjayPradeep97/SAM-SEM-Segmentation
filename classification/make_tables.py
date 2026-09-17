@@ -18,7 +18,7 @@ The held-out test column is never consulted for any of these choices.
 
 usage: python make_tables.py [<results dir>] [--luo <dir of luo_results_*.json>]
 """
-import csv, json, sys, os
+import csv, json, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent

@@ -38,22 +38,15 @@ sam_weights/*.pth
 analysis_results*.csv
 .app_state.json
 .analysis_state.json
-anaconda_projects/
-
-# Test data folders (large image datasets)
-Extrusion data for plastic blocks dinning hall plastics/
-
 # Scratch scripts and notes dropped at the repo root. Scoped to the root with
 # a leading slash: an unanchored "test_*.py" also matches tests/test_*.py, which
 # silently kept the real test suite out of every commit.
 /test_*.py
 /*.txt
-!/requirements.txt
 
 # Gradio cache
 gradio_cached_examples/
 flagged/
-add_scale_bars.ipynb
 
 # Publication branch: data, caches and generated artefacts that must not be committed
 _cache/

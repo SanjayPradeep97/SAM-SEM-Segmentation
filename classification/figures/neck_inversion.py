@@ -5,7 +5,7 @@ the particle appears LOW and the background HIGH. This measures it against the
 ground-truth masks so the claim rests on a number rather than on the colour map.
 """
 import numpy as np, torch, cv2
-import os, sys
+import sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))          # classification/

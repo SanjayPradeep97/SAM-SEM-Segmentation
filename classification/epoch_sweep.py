@@ -10,7 +10,7 @@ Each budget trains for exactly that many epochs with early stopping OFF, over
 
 usage: python epoch_sweep.py [<splits pkl>] [<results dir>]
 """
-import numpy as np, torch, json, sys, os
+import numpy as np, torch, json, sys
 from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
 sys.path.insert(0, str(Path(__file__).resolve().parent))

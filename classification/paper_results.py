@@ -320,8 +320,7 @@ def stage_finetune(args, device, models, inputs, out_csv):
 def stage_analyse(args, out_dir):
     """Every comparison the manuscript makes, with the test it actually needs."""
     import csv
-    from analyse import (mask_effect, headline, compare_all, wilson_ci,
-                         mcnemar_exact, nadeau_bengio_t)
+    from analyse import mask_effect, headline, compare_all, wilson_ci
 
     rows, per_image = [], {}
     for f in sorted(out_dir.glob("results_*.csv")):

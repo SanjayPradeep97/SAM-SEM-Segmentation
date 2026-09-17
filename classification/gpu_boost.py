@@ -39,8 +39,6 @@ import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-import numpy as np
-
 _STATE = {}
 
 

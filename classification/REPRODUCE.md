@@ -114,9 +114,9 @@ trained model: ViT-B/16 masked 60.9 %, ViT-B/16 raw 73.7 %, ConvNeXt-V2 raw
 unaffected because each fold model keeps its own best checkpoint.
 
 Rather than ship those numbers bare, `paper_protocol.refit_unreliable()` flags
-any row whose epoch budget is below `REFIT_MIN_BUDGET = 4`. The column was added
-to the shipped CSVs by `add_refit_flag.py` (the rule, not a hand edit) and is
-written natively by new runs. Eighteen probe rows are flagged by the same rule;
+any row whose epoch budget is below `REFIT_MIN_BUDGET = 4`; every row in the
+shipped CSVs carries the value that function returns, and new runs write it
+natively. Eighteen probe rows are flagged by the same rule;
 their refits are fine (probes have no warm-up schedule), which is why the flag
 means "do not read this value" rather than "this value is wrong". No flagged
 value is quoted anywhere in the manuscript.

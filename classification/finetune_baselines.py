@@ -53,7 +53,7 @@ USAGE
 """
 from __future__ import annotations
 
-import argparse, csv, json, math, shutil, sys, time
+import math, shutil, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from math import sqrt
 from pathlib import Path

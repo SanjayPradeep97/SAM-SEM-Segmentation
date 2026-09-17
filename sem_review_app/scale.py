@@ -19,13 +19,11 @@ So the panel does three things, in the order they are needed:
 from pathlib import Path
 
 import gradio as gr
-import numpy as np
 
 from sem_analysis_app.callbacks.refinement import get_current_visualization
 from sem_analysis_app.callbacks.scale_tab import confirm_scale
 from sem_analysis_app.state import state
-from sem_analysis_app.visualization import (create_particle_visualization,
-                                            create_results_dataframe,
+from sem_analysis_app.visualization import (create_results_dataframe,
                                             render_scale_check)
 from sem_particle_analysis import scale_calibration as sc
 

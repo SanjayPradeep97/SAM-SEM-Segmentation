@@ -29,11 +29,11 @@ particle, SAM masks it, the classifier labels it. `demo/run_demo.bat` (or
 
 | directory | what it holds |
 |---|---|
-| `sem_particle_analysis/`, `sem_analysis_app/`, `sem_review_app/`, `tests/` | the segmentation library, its Gradio app, the review app for correcting a batch analysis, and their test suite (as on `main`) |
+| `sem_particle_analysis/`, `sem_analysis_app/`, `sem_review_app/`, `tests/` | the segmentation library, its Gradio app, the review app for correcting a batch analysis, and their test suite |
 | `classification/` | protocol, feature extraction, probes, fine-tuned baselines, statistics, figure and table scripts, tests |
 | `baseline/` | the Luo et al. (2021) VGG-16 + VLAD re-implementation and its results |
 | `results/` | the run the paper reports: every configuration's metrics and **per-image predictions**, `analysis.json`, the epoch sweep, regenerated figures |
-| `splits/` | `dataset_splits.pkl`, the 1,785-image partition every number uses, plus the same as a CSV |
+| `splits/` | `dataset_splits.pkl`, the 1,785-image partition every number uses, the same as a CSV, and what each split contains |
 | `demo/` | the click-to-classify demonstration, with 60 held-out micrographs, their expert masks and the paper's classifier heads |
 | `reproduce.bat`, `reproduce.sh` | the one-command reproduction (Windows / Linux-macOS) |
 
@@ -54,7 +54,6 @@ python classification/check_env.py
 [`docs/SEGMENTATION_TOOL.md`](docs/SEGMENTATION_TOOL.md). It needs EasyOCR and
 Gradio and is kept separate because EasyOCR pins its own PyTorch.
 
-A minimal environment for the baseline alone is in `baseline/environment.yml`.
 The CUDA file pins the `+cu128` PyTorch build so an RTX 50-series card works
 (an unpinned `torch` resolves to a CPU-only wheel); the CPU file takes PyTorch
 from PyPI. The demo, the statistics, the tables and the tests run on CPU;

@@ -17,7 +17,6 @@ def _find_cache():
     benchmark-geometry cache for the repository's split file under
     <CNT_BASE>/Encoder Benchmark; otherwise any feats_*.npz there."""
     import glob
-    from pathlib import Path
     import cnt_paths
     env = os.environ.get("CNT_CACHE")
     if env and os.path.exists(env):
@@ -235,7 +234,7 @@ check("fit never receives y_test",
       'y_test' not in make_probe_fit.__code__.co_varnames)
 
 print("\n10. DETERMINISM ACROSS PROCESSES")
-import subprocess, json as _json
+import subprocess
 code = ('import sys,numpy as np,torch;sys.path.insert(0,%r);'
         'import paper_protocol as P;from probe_fit import make_probe_fit;'
         'z=np.load(%r,allow_pickle=True);y=z["y"];s=z["split"];'

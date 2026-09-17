@@ -15,7 +15,6 @@ the batch's first guess, and closing the app does not throw the difference
 away.
 """
 
-import os
 from pathlib import Path
 
 import gradio as gr
@@ -32,7 +31,6 @@ from sem_analysis_app.visualization import (create_particle_visualization,
                                             create_summary_statistics_table)
 from sem_particle_analysis import ParticleAnalyzer, ResultsManager
 from sem_particle_analysis import scale_calibration as sc
-from sem_particle_analysis.data_manager import parse_measurement_list
 
 # Where a reviewed folder keeps its own answers. Kept apart from
 # analysis_results.csv so the automatic pass stays on disk to compare against.
@@ -542,15 +540,6 @@ def reload_frame():
         return _stayed(frame, "Nothing open") + keep_controls()
     return ((frame[0], frame[1], f"Reloaded — {frame[2]}") + frame[3:]
             + fresh_controls())
-
-
-def current_overlay_path():
-    """Where the analysis's overlay for the current frame lives, or None."""
-    if not state.image_paths:
-        return None
-    stem = Path(state.image_paths[state.current_index]).stem
-    picture = Path(getattr(state, "review_root", ".")) / "overlay" / f"{stem}.png"
-    return str(picture) if picture.exists() else None
 
 
 def recorded_name():

@@ -3,7 +3,7 @@
 Ultralytics and the real images are not needed: a fake YOLO records what the
 trainer was handed, which is exactly what the last three bugs were about.
 """
-import sys, types, tempfile, shutil, os
+import sys, types, tempfile, os
 from pathlib import Path
 import numpy as np
 

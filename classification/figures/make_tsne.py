@@ -23,7 +23,7 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
-import os, sys
+import sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))          # classification/

@@ -36,7 +36,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "classification"))
-sys.path.insert(0, str(REPO / "sem_particle_analysis"))
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(HERE))
 
 # the segmentation package prints a few unicode glyphs; a cp1252 console would choke

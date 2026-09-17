@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # a git worktree is the *other* checkout. Without this the suite silently
 # exercises code that is not the code being changed, and a new argument to a
 # library function comes back as "unexpected keyword argument".
-sys.path.insert(0, str(Path(__file__).parent.parent / "sem_particle_analysis"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 def _ensure_usable_temp_root():
